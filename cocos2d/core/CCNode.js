@@ -746,7 +746,7 @@ let NodeDefines = {
             },
             set (value) {
                 vec3.set(this._eulerAngles, 0, 0, value);
-                this._fromEuler();
+                quat.fromAngleZ(this._quat, value);
                 this.setLocalDirty(LocalDirtyFlag.ROTATION);
                 this._renderFlag |= RenderFlow.FLAG_TRANSFORM;
 
@@ -761,6 +761,10 @@ let NodeDefines = {
          * !#zh 该节点的欧拉角度，用于 3D 项目。
          * @property eulerAngles
          * @type {Vec3}
+         * @example
+         * node.is3DNode = true;
+         * node.eulerAngles = cc.v3(45, 45, 45);
+         * cc.log("Node eulerAngles (X, Y, Z): " + node.eulerAngles.toString());
          */
 
         /**
@@ -768,10 +772,11 @@ let NodeDefines = {
          * !#zh 该节点 X 轴旋转角度。
          * @property rotationX
          * @type {Number}
-         * @example
          * @deprecated since v2.1
-         * node.rotationX = 45;
-         * cc.log("Node Rotation X: " + node.rotationX);
+         * @example
+         * node.is3DNode = true;
+         * node.eulerAngles = cc.v3(45, 0, 0);
+         * cc.log("Node eulerAngles X: " + node.eulerAngles.x);
          */
         rotationX: {
             get () {
@@ -782,7 +787,7 @@ let NodeDefines = {
                     this._eulerAngles.x = value;
                     // Update quaternion from rotation
                     if (this._eulerAngles.x === this._eulerAngles.y) {
-                        quat.fromEuler(this._quat, 0, 0, -value);
+                        quat.fromAngleZ(this._quat, -value);
                     }
                     else {
                         quat.fromEuler(this._quat, value, this._eulerAngles.y, 0);
@@ -802,10 +807,11 @@ let NodeDefines = {
          * !#zh 该节点 Y 轴旋转角度。
          * @property rotationY
          * @type {Number}
-         * @example
          * @deprecated since v2.1
-         * node.rotationY = 45;
-         * cc.log("Node Rotation Y: " + node.rotationY);
+         * @example
+         * node.is3DNode = true;
+         * node.eulerAngles = cc.v3(0, 45, 0);
+         * cc.log("Node eulerAngles Y: " + node.eulerAngles.y);
          */
         rotationY: {
             get () {
@@ -816,7 +822,7 @@ let NodeDefines = {
                     this._eulerAngles.y = value;
                     // Update quaternion from rotation
                     if (this._eulerAngles.x === this._eulerAngles.y) {
-                        quat.fromEuler(this._quat, 0, 0, -value);
+                        quat.fromAngleZ(this._quat, -value);
                     }
                     else {
                         quat.fromEuler(this._quat, this._eulerAngles.x, value, 0);
@@ -1299,7 +1305,7 @@ let NodeDefines = {
             this._quat.fromEuler(this._eulerAngles);
         }
         else {
-            quat.fromEuler(this._quat, 0, 0, this._eulerAngles.z);
+            quat.fromAngleZ(this._quat, this._eulerAngles.z);
         }
     },
 
