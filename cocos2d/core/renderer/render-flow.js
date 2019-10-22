@@ -1,21 +1,21 @@
-const DONOTHING = 0;
-const LOCAL_TRANSFORM = 1 << 0;
-const WORLD_TRANSFORM = 1 << 1;
-const TRANSFORM = LOCAL_TRANSFORM | WORLD_TRANSFORM;
-const UPDATE_RENDER_DATA = 1 << 2;
-const OPACITY = 1 << 3;
-const COLOR = 1 << 4;
-const RENDER = 1 << 5;
-const CUSTOM_IA_RENDER = 1 << 6;
-const CHILDREN = 1 << 7;
-const POST_UPDATE_RENDER_DATA = 1 << 8;
-const POST_RENDER = 1 << 9;
-const FINAL = 1 << 10;
+let FlagOfset = 0;
 
-let _batcher;
+const DONOTHING = 1 << FlagOfset++;
+const BREAK_FLOW = 1 << FlagOfset++;
+const LOCAL_TRANSFORM = 1 << FlagOfset++;
+const WORLD_TRANSFORM = 1 << FlagOfset++;
+const TRANSFORM = LOCAL_TRANSFORM | WORLD_TRANSFORM;
+const UPDATE_RENDER_DATA = 1 << FlagOfset++;
+const OPACITY = 1 << FlagOfset++;
+const COLOR = 1 << FlagOfset++;
+const OPACITY_COLOR = OPACITY | COLOR;
+const RENDER = 1 << FlagOfset++;
+const CHILDREN = 1 << FlagOfset++;
+const POST_RENDER = 1 << FlagOfset++;
+const FINAL = 1 << FlagOfset++;
+
+let _batcher, _forward;
 let _cullingMask = 0;
-let _renderQueueIndex = 0;
-const EventManager = require("../event-manager/CCEventManager");
 
 function RenderFlow () {
     this._func = init;
@@ -32,51 +32,21 @@ _proto._localTransform = function (node) {
     this._next._func(node);
 };
 
-function mul (out, a, b) {
-    let aa=a.m00, ab=a.m01, ac=a.m04, ad=a.m05, atx=a.m12, aty=a.m13;
-    let ba=b.m00, bb=b.m01, bc=b.m04, bd=b.m05, btx=b.m12, bty=b.m13;
-    if (bb !== 0 || bc !== 0) {
-        out.m00 = aa * ba + ab * bc;
-        out.m01 = aa * bb + ab * bd;
-        out.m04 = ac * ba + ad * bc;
-        out.m05 = ac * bb + ad * bd;
-        out.m12 = ba * atx + bc * aty + btx;
-        out.m13 = bb * atx + bd * aty + bty;
-    }
-    else {
-        out.m00 = aa * ba;
-        out.m01 = ab * bd;
-        out.m04 = ac * ba;
-        out.m05 = ad * bd;
-        out.m12 = ba * atx + btx;
-        out.m13 = bd * aty + bty;
-    }
-}
-
 _proto._worldTransform = function (node) {
     _batcher.worldMatDirty ++;
 
     let t = node._matrix;
-    let position = node._position;
-    t.m12 = position.x;
-    t.m13 = position.y;
+    let trs = node._trs;
+    let tm = t.m;
+    tm[12] = trs[0];
+    tm[13] = trs[1];
+    tm[14] = trs[2];
 
-    mul(node._worldMatrix, t, node._parent._worldMatrix);
+    node._mulMat(node._worldMatrix, node._parent._worldMatrix, t);
     node._renderFlag &= ~WORLD_TRANSFORM;
     this._next._func(node);
 
     _batcher.worldMatDirty --;
-};
-
-_proto._color = function (node) {
-    let comp = node._renderComponent;
-    if (comp) {
-        comp._updateColor();
-    }
-    else {
-        node._renderFlag &= ~COLOR;
-    }
-    this._next._func(node);
 };
 
 _proto._opacity = function (node) {
@@ -88,6 +58,16 @@ _proto._opacity = function (node) {
     _batcher.parentOpacityDirty--;
 };
 
+_proto._color = function (node) {
+    let comp = node._renderComponent;
+    if (comp) {
+        comp._updateColor();
+    }
+
+    node._renderFlag &= ~COLOR;
+    this._next._func(node);
+};
+
 _proto._updateRenderData = function (node) {
     let comp = node._renderComponent;
     comp._assembler.updateRenderData(comp);
@@ -97,15 +77,11 @@ _proto._updateRenderData = function (node) {
 
 _proto._render = function (node) {
     let comp = node._renderComponent;
-    _batcher._commitComp(comp, comp._assembler, node._cullingMask);
+    comp._checkBacth(_batcher, node._cullingMask);
+    comp._assembler.fillBuffers(comp, _batcher);
     this._next._func(node);
 };
 
-_proto._customIARender = function (node) {
-    let comp = node._renderComponent;
-    _batcher._commitIA(comp, comp._assembler, node._cullingMask);
-    this._next._func(node);
-};
 
 _proto._children = function (node) {
     let cullingMask = _cullingMask;
@@ -115,17 +91,18 @@ _proto._children = function (node) {
     let opacity = (batcher.parentOpacity *= (node._opacity / 255));
 
     let worldTransformFlag = batcher.worldMatDirty ? WORLD_TRANSFORM : 0;
-    let worldOpacityFlag = batcher.parentOpacityDirty ? COLOR : 0;
+    let worldOpacityFlag = batcher.parentOpacityDirty ? OPACITY_COLOR : 0;
     let worldDirtyFlag = worldTransformFlag | worldOpacityFlag;
 
     let children = node._children;
     for (let i = 0, l = children.length; i < l; i++) {
         let c = children[i];
-        EventManager._updateRenderOrder(c, ++_renderQueueIndex);
 
         // Advance the modification of the flag to avoid node attribute modification is invalid when opacity === 0.
         c._renderFlag |= worldDirtyFlag;
         if (!c._activeInHierarchy || c._opacity === 0) continue;
+
+        _cullingMask = c._cullingMask = c.groupIndex === 0 ? cullingMask : 1 << c.groupIndex;
 
         // TODO: Maybe has better way to implement cascade opacity
         let colorVal = c._color._val;
@@ -139,16 +116,10 @@ _proto._children = function (node) {
     this._next._func(node);
 };
 
-_proto._postUpdateRenderData = function (node) {
-    let comp = node._renderComponent;
-    comp._postAssembler && comp._postAssembler.updateRenderData(comp);
-    node._renderFlag &= ~POST_UPDATE_RENDER_DATA;
-    this._next._func(node);
-};
-
 _proto._postRender = function (node) {
     let comp = node._renderComponent;
-    _batcher._commitComp(comp, comp._postAssembler, node._cullingMask);
+    comp._checkBacth(_batcher, node._cullingMask);
+    comp._assembler.postFillBuffers(comp, _batcher);
     this._next._func(node);
 };
 
@@ -166,17 +137,20 @@ function createFlow (flag, next) {
         case DONOTHING: 
             flow._func = flow._doNothing;
             break;
+        case BREAK_FLOW:
+            flow._func = flow._doNothing;
+            break;
         case LOCAL_TRANSFORM: 
             flow._func = flow._localTransform;
             break;
         case WORLD_TRANSFORM: 
             flow._func = flow._worldTransform;
             break;
-        case COLOR:
-            flow._func = flow._color;
-            break;
         case OPACITY:
             flow._func = flow._opacity;
+            break;
+        case COLOR:
+            flow._func = flow._color;
             break;
         case UPDATE_RENDER_DATA:
             flow._func = flow._updateRenderData;
@@ -184,14 +158,8 @@ function createFlow (flag, next) {
         case RENDER: 
             flow._func = flow._render;
             break;
-        case CUSTOM_IA_RENDER:
-            flow._func = flow._customIARender;
-            break;
         case CHILDREN: 
             flow._func = flow._children;
-            break;
-        case POST_UPDATE_RENDER_DATA: 
-            flow._func = flow._postUpdateRenderData;
             break;
         case POST_RENDER: 
             flow._func = flow._postRender;
@@ -221,31 +189,39 @@ function init (node) {
 
 RenderFlow.flows = flows;
 RenderFlow.createFlow = createFlow;
-RenderFlow.visit = function (scene) {
-    _batcher.reset();
-    _batcher.walking = true;
 
-    _cullingMask = 1 << scene.groupIndex;
-    _renderQueueIndex = 0;
+RenderFlow.visitRootNode = function (rootNode) {
+    _cullingMask = 1 << rootNode.groupIndex;
 
-    if (scene._renderFlag & WORLD_TRANSFORM) {
+    if (rootNode._renderFlag & WORLD_TRANSFORM) {
         _batcher.worldMatDirty ++;
-        scene._calculWorldMatrix();
-        scene._renderFlag &= ~WORLD_TRANSFORM;
+        rootNode._calculWorldMatrix();
+        rootNode._renderFlag &= ~WORLD_TRANSFORM;
 
-        flows[scene._renderFlag]._func(scene);
+        flows[rootNode._renderFlag]._func(rootNode);
 
         _batcher.worldMatDirty --;
     }
     else {
-        flows[scene._renderFlag]._func(scene);
+        flows[rootNode._renderFlag]._func(rootNode);
     }
-
-    _batcher.terminate();
 };
 
-RenderFlow.init = function (batcher) {
+RenderFlow.render = function (scene, dt) {
+    _batcher.reset();
+    _batcher.walking = true;
+
+    RenderFlow.visitRootNode(scene);
+
+    _batcher.terminate();
+    _batcher.walking = false;
+
+    _forward.render(_batcher._renderScene, dt);
+};
+
+RenderFlow.init = function (batcher, forwardRenderer) {
     _batcher = batcher;
+    _forward = forwardRenderer;
 
     flows[0] = EMPTY_FLOW;
     for (let i = 1; i < FINAL; i++) {
@@ -253,17 +229,21 @@ RenderFlow.init = function (batcher) {
     }
 };
 
+RenderFlow.getBachther = function () {
+    return _batcher;
+};
+
 RenderFlow.FLAG_DONOTHING = DONOTHING;
+RenderFlow.FLAG_BREAK_FLOW = BREAK_FLOW;
 RenderFlow.FLAG_LOCAL_TRANSFORM = LOCAL_TRANSFORM;
 RenderFlow.FLAG_WORLD_TRANSFORM = WORLD_TRANSFORM;
 RenderFlow.FLAG_TRANSFORM = TRANSFORM;
-RenderFlow.FLAG_COLOR = COLOR;
 RenderFlow.FLAG_OPACITY = OPACITY;
+RenderFlow.FLAG_COLOR = COLOR;
+RenderFlow.FLAG_OPACITY_COLOR = OPACITY_COLOR;
 RenderFlow.FLAG_UPDATE_RENDER_DATA = UPDATE_RENDER_DATA;
 RenderFlow.FLAG_RENDER = RENDER;
-RenderFlow.FLAG_CUSTOM_IA_RENDER = CUSTOM_IA_RENDER;
 RenderFlow.FLAG_CHILDREN = CHILDREN;
-RenderFlow.FLAG_POST_UPDATE_RENDER_DATA = POST_UPDATE_RENDER_DATA;
 RenderFlow.FLAG_POST_RENDER = POST_RENDER;
 RenderFlow.FLAG_FINAL = FINAL;
 

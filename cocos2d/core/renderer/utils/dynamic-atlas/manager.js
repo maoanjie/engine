@@ -8,7 +8,7 @@ let _textureSize = 2048;
 // Smaller frame is more likely to be affected by linear filter
 let _minFrameSize = 8;
 let _maxFrameSize = 512;
-
+let _textureBleeding = true;
 
 let _debugNode = null;
 
@@ -33,6 +33,7 @@ let _enabled = false;
  * @class DynamicAtlasManager
  */
 let dynamicAtlasManager = {
+    Atlas: Atlas,
     
     /**
      * !#en Enabled or Disabled dynamic atlas.
@@ -71,6 +72,20 @@ let dynamicAtlasManager = {
     },
 
     /**
+     * !#en Is enable textureBleeding.
+     * !#zh 是否开启 textureBleeding
+     * @property textureBleeding
+     * @type {Boolean}
+     */
+    get textureBleeding () {
+        return _textureBleeding;
+    },
+
+    set textureBleeding (enable) {
+        _textureBleeding = enable;
+    },
+
+    /**
      * !#en The size of the atlas that was created
      * !#zh 创建的图集的宽高
      * @property textureSize
@@ -97,6 +112,19 @@ let dynamicAtlasManager = {
     },
 
     /**
+     * !#en The minimum size of the picture that can be added to the atlas.
+     * !#zh 可以添加进图集的图片的最小尺寸。
+     * @property minFrameSize
+     * @type {Number}
+     */
+    get minFrameSize () {
+        return _minFrameSize;
+    },
+    set minFrameSize (value) {
+        _minFrameSize = value;
+    },
+    
+    /**
      * !#en Append a sprite frame into the dynamic atlas.
      * !#zh 添加碎图进入动态图集。
      * @method insertSpriteFrame
@@ -106,15 +134,8 @@ let dynamicAtlasManager = {
         if (CC_EDITOR) return null;
         if (!_enabled || _atlasIndex === _maxAtlasCount ||
             !spriteFrame || spriteFrame._original) return null;
-
-        let texture = spriteFrame._texture;
-        if (texture instanceof cc.RenderTexture) return null;
-
-        let w = texture.width, h = texture.height;
-        if (w > _maxFrameSize || h > _maxFrameSize || w <= _minFrameSize || h <= _minFrameSize
-         || texture._getHash() !== Atlas.DEFAULT_HASH) {
-            return null;
-        }
+        
+        if (!spriteFrame._texture.packable) return null;
 
         let atlas = _atlases[_atlasIndex];
         if (!atlas) {
@@ -140,6 +161,17 @@ let dynamicAtlasManager = {
         }
         _atlases.length = 0;
         _atlasIndex = -1;
+    },
+
+    deleteAtlasTexture (spriteFrame) {
+        if (!spriteFrame._original) return;
+
+        let texture = spriteFrame._original._texture;
+        if (texture) {
+            for (let i = 0, l = _atlases.length; i < l; i++) {
+                _atlases[i].deleteInnerTexture(texture);
+            }
+        }
     },
 
     /**

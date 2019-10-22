@@ -23,7 +23,6 @@
  THE SOFTWARE.
  ****************************************************************************/
 
-require('./renderers');
 const utils = require('./renderers/utils')
 
 let RenderComponentHandle = function (device, defaultCamera) {
@@ -57,15 +56,7 @@ RenderComponentHandle.prototype = {
     },
 
     terminate () {
-        this.walking = false;
-    },
 
-    _commitComp (comp, assembler) {
-        let ctx = this._device._ctx;
-        let cam = this._camera;
-        ctx.setTransform(cam.a, cam.b, cam.c, cam.d, cam.tx, cam.ty);
-        ctx.scale(1, -1);
-        assembler.draw(ctx, comp);
     }
 };
 

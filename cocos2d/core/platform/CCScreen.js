@@ -32,8 +32,12 @@
  */
 cc.screen = /** @lends cc.screen# */{
     _supportsFullScreen: false,
+    _onfullscreenchange: null,
+    _onfullscreenerror: null,
     // the pre fullscreenchange function
     _preOnFullScreenChange: null,
+    _preOnFullScreenError: null,
+    _preOnTouch: null,
     _touchEvent: "",
     _fn: null,
     // Function mapping for cross browser support
@@ -43,35 +47,40 @@ cc.screen = /** @lends cc.screen# */{
             'exitFullscreen',
             'fullscreenchange',
             'fullscreenEnabled',
-            'fullscreenElement'
+            'fullscreenElement',
+            'fullscreenerror',
         ],
         [
             'requestFullScreen',
             'exitFullScreen',
             'fullScreenchange',
             'fullScreenEnabled',
-            'fullScreenElement'
+            'fullScreenElement',
+            'fullscreenerror',
         ],
         [
             'webkitRequestFullScreen',
             'webkitCancelFullScreen',
             'webkitfullscreenchange',
             'webkitIsFullScreen',
-            'webkitCurrentFullScreenElement'
+            'webkitCurrentFullScreenElement',
+            'webkitfullscreenerror',
         ],
         [
             'mozRequestFullScreen',
             'mozCancelFullScreen',
             'mozfullscreenchange',
             'mozFullScreen',
-            'mozFullScreenElement'
+            'mozFullScreenElement',
+            'mozfullscreenerror',
         ],
         [
             'msRequestFullscreen',
             'msExitFullscreen',
             'MSFullscreenChange',
             'msFullscreenEnabled',
-            'msFullscreenElement'
+            'msFullscreenElement',
+            'msfullscreenerror',
         ]
     ],
     
@@ -93,7 +102,11 @@ cc.screen = /** @lends cc.screen# */{
         }
 
         this._supportsFullScreen = (this._fn.requestFullscreen !== undefined);
-        this._touchEvent = ('ontouchstart' in window) ? 'touchstart' : 'mousedown';
+
+        // Bug fix only for v2.1, don't merge into v2.0
+        // In v2.0, screen touchend events conflict with editBox touchend events if it's not stayOnTop.
+        // While in v2.1, editBox always keep stayOnTop and it doesn't support touchend events.
+        this._touchEvent = ('ontouchend' in window) ? 'touchend' : 'mousedown';
     },
     
     /**
@@ -116,8 +129,9 @@ cc.screen = /** @lends cc.screen# */{
      * @method requestFullScreen
      * @param {Element} element
      * @param {Function} onFullScreenChange
+     * @param {Function} onFullScreenError
      */
-    requestFullScreen: function (element, onFullScreenChange) {
+    requestFullScreen: function (element, onFullScreenChange, onFullScreenError) {
         if (element && element.tagName.toLowerCase() === "video") {
             if (cc.sys.os === cc.sys.OS_IOS && cc.sys.isBrowser && element.readyState > 0) {
                 element.webkitEnterFullscreen && element.webkitEnterFullscreen();
@@ -135,15 +149,23 @@ cc.screen = /** @lends cc.screen# */{
         element = element || document.documentElement;
 
         if (onFullScreenChange) {
-            var eventName = this._fn.fullscreenchange;
-            if (this._preOnFullScreenChange) {
-                document.removeEventListener(eventName, this._preOnFullScreenChange);
+            let eventName = this._fn.fullscreenchange;
+            if (this._onfullscreenchange) {
+                document.removeEventListener(eventName, this._onfullscreenchange);
             }
-            this._preOnFullScreenChange = onFullScreenChange;
+            this._onfullscreenchange = onFullScreenChange;
             document.addEventListener(eventName, onFullScreenChange, false);
         }
+        if (onFullScreenError) {
+            let eventName = this._fn.fullscreenerror;
+            if (this._onfullscreenerror) {
+                document.removeEventListener(eventName, this._onfullscreenerror);
+            }
+            this._onfullscreenerror = onFullScreenError;
+            document.addEventListener(eventName, onFullScreenError, { once: true });
+        }
 
-        return element[this._fn.requestFullscreen]();
+        element[this._fn.requestFullscreen]();
     },
     
     /**
@@ -172,15 +194,48 @@ cc.screen = /** @lends cc.screen# */{
      */
     autoFullScreen: function (element, onFullScreenChange) {
         element = element || document.body;
-        var touchTarget = cc.game.canvas || element;
-        var theScreen = this;
-        // Function bind will be too complicated here because we need the callback function's reference to remove the listener
-        function callback() {
-            touchTarget.removeEventListener(theScreen._touchEvent, callback);
-            theScreen.requestFullScreen(element, onFullScreenChange);
-        }
+
+        this._ensureFullScreen(element, onFullScreenChange);
         this.requestFullScreen(element, onFullScreenChange);
-        touchTarget.addEventListener(this._touchEvent, callback);
-    }
+    },
+
+    disableAutoFullScreen (element) {
+        let touchTarget = cc.game.canvas || element;
+        let touchEventName = this._touchEvent;
+        if (this._preOnTouch) {
+            touchTarget.removeEventListener(touchEventName, this._preOnTouch);
+            this._preOnTouch = null;
+        }
+    },
+
+    // Register touch event if request full screen failed
+    _ensureFullScreen (element, onFullScreenChange) {
+        let self = this;
+        let touchTarget = cc.game.canvas || element;
+        let fullScreenErrorEventName = this._fn.fullscreenerror;
+        let touchEventName = this._touchEvent;
+        
+        function onFullScreenError () {
+            self._preOnFullScreenError = null;
+
+            // handle touch event listener
+            function onTouch() {
+                self._preOnTouch = null;
+                self.requestFullScreen(element, onFullScreenChange);
+            }
+            if (self._preOnTouch) {
+                touchTarget.removeEventListener(touchEventName, self._preOnTouch);
+            }
+            self._preOnTouch = onTouch;
+            touchTarget.addEventListener(touchEventName, self._preOnTouch, { once: true });
+        }
+
+        // handle full screen error
+        if (this._preOnFullScreenError) {
+            element.removeEventListener(fullScreenErrorEventName, this._preOnFullScreenError);
+        }
+        this._preOnFullScreenError = onFullScreenError;
+        element.addEventListener(fullScreenErrorEventName, onFullScreenError, { once: true });
+    },
 };
 cc.screen.init();

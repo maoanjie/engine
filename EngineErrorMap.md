@@ -246,7 +246,11 @@ The '%s' will be removed in v2.0, please use '%s' instead.
 
 ### 1407
 
-cc.pool is being removed from v2.0, you are getting cc.js.Pool instead
+cc.pool is being removed from v2.0, you are getting cc.js.Pool instead.
+
+### 1408
+
+'%s' is not support in the '%s', please use '%s' instead.
 
 ### 1500
 
@@ -1064,6 +1068,10 @@ contentSize parameter is deprecated and ignored for cc.Texture2D initWithData fu
 
 Lazy init texture with image element failed due to image loading failure: %s
 
+### 3120
+
+Loading texture from '%s' with unsupported type: '%s'. Add '%s' into 'cc.macro.SUPPORT_TEXTURE_FORMATS' please.
+
 ### 3200
 
 <!-- DEPRECATED -->
@@ -1243,6 +1251,7 @@ Should not add %s to a node which size is already used by its other component.
 
 ### 3629
 
+<!-- DEPRECATED -->
 attribute must be type object
 
 ### 3630
@@ -1351,24 +1360,24 @@ Default value must be initialized at their declaration:
   type: cc.Integer
   default: 0  // <--
 })
-value;
+myProp;
 // After:
 @property({
   type: cc.Integer
 })
-value = 0;    // <--
+myProp = 0;    // <--
 ```
 
 ### 3654
 
-Please specifiy a default value for "%s" property at its declaration:
+Please specifiy a default value for "%s.%s" at its declaration:
 ```
 // Before:
 @property(...)
-value; 
+myProp;
 // After:
 @property(...)
-value = 0
+myProp = 0;
 ```
 
 ### 3655
@@ -1903,12 +1912,11 @@ Invalid type of %s.%s
 
 ### 5509
 
-<!-- DEPRECATED -->
 The 'type' attribute of '%s.%s' must be child class of cc.Asset, otherwise you should use 'url: %s' instead
 
 ### 5510
 
-The 'type' attribute of '%s.%s' can not be 'Number', use 'Float' or 'Integer' instead please.
+The 'type' attribute of '%s.%s' can not be 'Number', use cc.Float or cc.Integer instead please.
 
 ### 5511
 
@@ -2698,4 +2706,12 @@ Stencil manager does not support level bigger than %d in this device.
 
 ### 9001
 
-Stencil manager is already empty, cannot pop any mask
+Stencil manager is already empty, cannot pop any mask.
+
+### 9100
+
+LabelAtlas '%s' cannot be loaded, raw texture does not exist.
+
+### 9101
+
+LabelAtlas '%s' cannot be loaded, fnt data does not exist.

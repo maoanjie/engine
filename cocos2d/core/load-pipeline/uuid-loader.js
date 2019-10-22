@@ -134,6 +134,9 @@ function loadDepends (pipeline, item, asset, depends, callback) {
                 if (this._stillUseUrl) {
                     value = (value && cc.RawAsset.wasRawAssetType(value.constructor)) ? value.nativeUrl : item.rawUrl;
                 }
+                if (this._ownerProp === '_nativeAsset') {
+                    this._owner.url = item.url;
+                }
                 this._owner[this._ownerProp] = value;
                 if (item.uuid !== asset._uuid && dependKeys.indexOf(item.id) < 0) {
                     dependKeys.push(item.id);
@@ -177,6 +180,14 @@ function loadDepends (pipeline, item, asset, depends, callback) {
             callback(null, asset);
         }
         else {
+            if (!errors && asset.onLoad) {
+                try {
+                    asset.onLoad();
+                }
+                catch (e) {
+                    cc._throw(e);
+                } 
+            }
             callback(errors, asset);
         }
     });
@@ -274,6 +285,7 @@ function loadUuid (item, callback) {
     }
 
     asset._uuid = item.uuid;
+    asset.url = asset.nativeUrl;
 
     if (CC_EDITOR && isScene && MissingClass.hasMissingClass) {
         MissingClass.reportMissingClass(asset);
@@ -285,6 +297,7 @@ function loadUuid (item, callback) {
     cc.deserialize.Details.pool.put(tdInfo);
 
     if (depends.length === 0) {
+        if (asset.onLoad) asset.onLoad();
         return callback(null, asset);
     }
     loadDepends(this.pipeline, item, asset, depends, callback);

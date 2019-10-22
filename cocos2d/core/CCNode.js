@@ -25,14 +25,14 @@
 
 'use strict';
 
+import { mat4, vec2, vec3, quat, trs } from './vmath';
+
 const BaseNode = require('./utils/base-node');
 const PrefabHelper = require('./utils/prefab-helper');
-const mathPools = require('./utils/math-pools');
-const math = require('./renderer/render-engine').math;
+const nodeMemPool = require('./utils/trans-pool').NodeMemPool;
 const AffineTrans = require('./utils/affine-transform');
 const eventManager = require('./event-manager');
 const macro = require('./platform/CCMacro');
-const misc = require('./utils/misc');
 const js = require('./platform/js');
 const Event = require('./event/event');
 const EventTarget = require('./event/event-target');
@@ -46,11 +46,50 @@ const ONE_DEGREE = Math.PI / 180;
 
 var ActionManagerExist = !!cc.ActionManager;
 var emptyFunc = function () {};
-var _vec2a = cc.v2();
-var _vec2b = cc.v2();
-var _mat4_temp = math.mat4.create();
-var _vec3_temp = math.vec3.create();
-var _quat_temp = math.quat.create();
+
+// getWorldPosition temp var
+var _gwpVec3 = cc.v3();
+var _gwpQuat = cc.quat();
+
+// _invTransformPoint temp var
+var _tpVec3a = cc.v3();
+var _tpVec3b = cc.v3();
+var _tpQuata = cc.quat();
+var _tpQuatb = cc.quat();
+
+// setWorldPosition temp var
+var _swpVec3 = cc.v3();
+
+// getWorldScale temp var
+var _gwsVec3 = cc.v3();
+
+// setWorldScale temp var
+var _swsVec3 = cc.v3();
+
+// getWorldRT temp var
+var _gwrtVec3a = cc.v3();
+var _gwrtVec3b = cc.v3();
+var _gwrtQuata = cc.quat();
+var _gwrtQuatb = cc.quat();
+
+// lookAt temp var
+var _laVec3 = cc.v3();
+var _laQuat = quat.create();
+
+// _hitTest temp var
+var _htVec3a = cc.v3();
+var _htVec3b = cc.v3();
+
+// getWorldRotation temp var
+var _gwrQuat = cc.quat();
+
+// setWorldRotation temp var
+var _swrQuat = cc.quat();
+
+var _quata = cc.quat();
+var _mat4_temp = mat4.create();
+var _vec3_temp = vec3.create();
+
 var _cachedArray = new Array(16);
 _cachedArray.length = 0;
 
@@ -64,8 +103,7 @@ const COLOR_ON = 1 << 5;
 
 let BuiltinGroupIndex = cc.Enum({
     DEBUG: 31
-})
-
+});
 
 /**
  * !#en Node's local dirty properties flag
@@ -105,12 +143,19 @@ var LocalDirtyFlag = cc.Enum({
      */
     SKEW: 1 << 3,
     /**
-     * !#en Flag for position or rotation dirty
-     * !#zh 旋转或位置 dirty 的标记位
-     * @property {Number} RT
+     * !#en Flag for rotation, scale or position dirty
+     * !#zh 旋转，缩放，或位置 dirty 的标记位
+     * @property {Number} TRS
      * @static
      */
-    RT: 1 << 0 | 1 << 1 | 1 << 2,
+    TRS: 1 << 0 | 1 << 1 | 1 << 2,
+    /**
+     * !#en Flag for rotation or scale dirty
+     * !#zh 旋转或缩放 dirty 的标记位
+     * @property {Number} RS
+     * @static
+     */
+    RS: 1 << 1 | 1 << 2,
     /**
      * !#en Flag for all dirty properties
      * !#zh 覆盖所有 dirty 状态的标记位
@@ -127,6 +172,7 @@ var LocalDirtyFlag = cc.Enum({
  * @static
  * @namespace Node
  */
+// Why EventType defined as class, because the first parameter of Node.on method needs set as 'string' type.
 var EventType = cc.Enum({
     /**
      * !#en The event type for touch start event, you can use its value directly: 'touchstart'
@@ -251,14 +297,14 @@ var EventType = cc.Enum({
      */
     ANCHOR_CHANGED: 'anchor-changed',
     /**
-     * !#en The event type for color change events.
-     * Performance note, this event will be triggered every time corresponding properties being changed,
-     * if the event callback have heavy logic it may have great performance impact, try to avoid such scenario.
-     * !#zh 当节点颜色改变时触发的事件。
-     * 性能警告：这个事件会在每次对应的属性被修改时触发，如果事件回调损耗较高，有可能对性能有很大的负面影响，请尽量避免这种情况。
-     * @property {String} COLOR_CHANGED
-     * @static
-     */
+    * !#en The event type for color change events.
+    * Performance note, this event will be triggered every time corresponding properties being changed,
+    * if the event callback have heavy logic it may have great performance impact, try to avoid such scenario.
+    * !#zh 当节点颜色改变时触发的事件。
+    * 性能警告：这个事件会在每次对应的属性被修改时触发，如果事件回调损耗较高，有可能对性能有很大的负面影响，请尽量避免这种情况。
+    * @property {String} COLOR_CHANGED
+    * @static
+    */
     COLOR_CHANGED: 'color-changed',
     /**
      * !#en The event type for new child added events.
@@ -288,6 +334,13 @@ var EventType = cc.Enum({
      * @static
      */
     GROUP_CHANGED: 'group-changed',
+    /**
+     * !#en The event type for node's sibling order changed.
+     * !#zh 当节点在兄弟节点中的顺序发生变化时触发的事件。
+     * @property {String} SIBLING_ORDER_CHANGED
+     * @static
+     */
+    SIBLING_ORDER_CHANGED: 'sibling-order-changed',
 });
 
 var _touchEvents = [
@@ -526,6 +579,9 @@ function _getActualGroupIndex (node) {
 function _updateCullingMask (node) {
     let index = _getActualGroupIndex(node);
     node._cullingMask = 1 << index;
+    if (CC_JSB && CC_NATIVERENDERER) {
+        node._proxy && node._proxy.updateCullingMask();
+    };
     for (let i = 0; i < node._children.length; i++) {
         _updateCullingMask(node._children[i]);
     }
@@ -541,7 +597,7 @@ function _updateCullingMask (node) {
  * @class Node
  * @extends _BaseNode
  */
-var Node = cc.Class({
+let NodeDefines = {
     name: 'cc.Node',
     extends: BaseNode,
 
@@ -551,19 +607,10 @@ var Node = cc.Class({
         _color: cc.Color.WHITE,
         _contentSize: cc.Size,
         _anchorPoint: cc.v2(0.5, 0.5),
-        _position: cc.Vec3,
-        _scaleX: {
-            default: undefined,
-            type: cc.Float
-        },
-        _scaleY: {
-            default: undefined,
-            type: cc.Float
-        },
-        _scale: cc.v3(1, 1, 1),
-        _rotationX: 0.0,
-        _rotationY: 0.0,
-        _quat: cc.Quat,
+        _position: undefined,
+        _scale: undefined,
+        _trs: null,
+        _eulerAngles: cc.Vec3,
         _skewX: 0.0,
         _skewY: 0.0,
         _zIndex: {
@@ -575,9 +622,9 @@ var Node = cc.Class({
             serializable: false
         },
     
+        _is3DNode: false,
 
         // internal properties
-
         /**
          * !#en
          * Group index of node.<br/>
@@ -589,9 +636,19 @@ var Node = cc.Class({
          * @type {Integer}
          * @default 0
          */
-        groupIndex: {
+        _groupIndex: {
             default: 0,
-            type: cc.Integer
+            formerlySerializedAs: 'groupIndex'
+        },
+        groupIndex: {
+            get () {
+                return this._groupIndex;
+            },
+            set (value) {
+                this._groupIndex = value;
+                _updateCullingMask(this);
+                this.emit(EventType.GROUP_CHANGED, this);
+            }
         },
 
         /**
@@ -612,8 +669,6 @@ var Node = cc.Class({
             set (value) {
                 // update the groupIndex
                 this.groupIndex = cc.game.groupList.indexOf(value);
-                _updateCullingMask(this);
-                this.emit(EventType.GROUP_CHANGED, this);
             }
         },
 
@@ -638,25 +693,25 @@ var Node = cc.Class({
          */
         x: {
             get () {
-                return this._position.x;
+                return this._trs[0];
             },
             set (value) {
-                var localPosition = this._position;
-                if (value !== localPosition.x) {
+                let trs = this._trs;
+                if (value !== trs[0]) {
                     if (!CC_EDITOR || isFinite(value)) {
+                        let oldValue;
                         if (CC_EDITOR) {
-                            var oldValue = localPosition.x;
+                            oldValue = trs[0];
                         }
 
-                        localPosition.x = value;
+                        trs[0] = value;
                         this.setLocalDirty(LocalDirtyFlag.POSITION);
-                        this._renderFlag |= RenderFlow.FLAG_WORLD_TRANSFORM;
                         
                         // fast check event
                         if (this._eventMask & POSITION_ON) {
                             // send event
                             if (CC_EDITOR) {
-                                this.emit(EventType.POSITION_CHANGED, new cc.Vec3(oldValue, localPosition.y, localPosition.z));
+                                this.emit(EventType.POSITION_CHANGED, new cc.Vec3(oldValue, trs[1], trs[2]));
                             }
                             else {
                                 this.emit(EventType.POSITION_CHANGED);
@@ -681,25 +736,25 @@ var Node = cc.Class({
          */
         y: {
             get () {
-                return this._position.y;
+                return this._trs[1];
             },
             set (value) {
-                var localPosition = this._position;
-                if (value !== localPosition.y) {
+                let trs = this._trs;
+                if (value !== trs[1]) {
                     if (!CC_EDITOR || isFinite(value)) {
+                        let oldValue;
                         if (CC_EDITOR) {
-                            var oldValue = localPosition.y;
+                            oldValue = trs[1];
                         }
 
-                        localPosition.y = value;
+                        trs[1] = value;
                         this.setLocalDirty(LocalDirtyFlag.POSITION);
-                        this._renderFlag |= RenderFlow.FLAG_WORLD_TRANSFORM;
 
                         // fast check event
                         if (this._eventMask & POSITION_ON) {
                             // send event
                             if (CC_EDITOR) {
-                                this.emit(EventType.POSITION_CHANGED, new cc.Vec3(localPosition.x, oldValue, localPosition.z));
+                                this.emit(EventType.POSITION_CHANGED, new cc.Vec3(trs[0], oldValue, trs[2]));
                             }
                             else {
                                 this.emit(EventType.POSITION_CHANGED);
@@ -712,83 +767,105 @@ var Node = cc.Class({
                 }
             },
         },
-        
-        z: {
-            get () {
-                return this._position.z;
-            },
-            set (value) {
-                var localPosition = this._position;
-                if (value !== localPosition.z) {
-                    if (!CC_EDITOR || isFinite(value)) {
-                        localPosition.z = value;
-                        this.setLocalDirty(LocalDirtyFlag.POSITION);
-                        this._renderFlag |= RenderFlow.FLAG_WORLD_TRANSFORM;
-                        // fast check event
-                        if (this._eventMask & POSITION_ON) {
-                            this.emit(EventType.POSITION_CHANGED);
-                        }
-                    }
-                    else {
-                        cc.error(ERR_INVALID_NUMBER, 'new z');
-                    }
-                }
-            },
-        },
+
+        /**
+         * !#en z axis position of node.
+         * !#zh 节点 Z 轴坐标。
+         * @property z
+         * @type {Number}
+         */
 
         /**
          * !#en Rotation of node.
          * !#zh 该节点旋转角度。
          * @property rotation
          * @type {Number}
+         * @deprecated since v2.1
          * @example
          * node.rotation = 90;
          * cc.log("Node Rotation: " + node.rotation);
          */
         rotation: {
             get () {
-                return this._rotationX;
+                if (CC_DEBUG) {
+                    cc.warn("`cc.Node.rotation` is deprecated since v2.1.0, please use `-angle` instead. (`this.node.rotation` -> `-this.node.angle`)");
+                }
+                return -this.angle;
             },
             set (value) {
-                if (this._rotationX !== value || this._rotationY !== value) {
-                    this._rotationX = this._rotationY = value;
-                    // Update quaternion from rotation
-                    math.quat.fromEuler(this._quat, 0, 0, -value);
-                    this.setLocalDirty(LocalDirtyFlag.ROTATION);
-                    this._renderFlag |= RenderFlow.FLAG_TRANSFORM;
+                if (CC_DEBUG) {
+                    cc.warn("`cc.Node.rotation` is deprecated since v2.1.0, please set `-angle` instead. (`this.node.rotation = x` -> `this.node.angle = -x`)");
+                }
+                this.angle = -value;
+            }
+        },
 
-                    if (this._eventMask & ROTATION_ON) {
-                        this.emit(EventType.ROTATION_CHANGED);
-                    }
+        /**
+         * !#en
+         * Angle of node, the positive value is anti-clockwise direction.
+         * !#zh
+         * 该节点的旋转角度，正值为逆时针方向。
+         * @property angle
+         * @type {Number}
+         */
+        angle: {
+            get () {
+                return this._eulerAngles.z;
+            },
+            set (value) {
+                vec3.set(this._eulerAngles, 0, 0, value);   
+                trs.fromAngleZ(this._trs, value);
+                this.setLocalDirty(LocalDirtyFlag.ROTATION);
+
+                if (this._eventMask & ROTATION_ON) {
+                    this.emit(EventType.ROTATION_CHANGED);
                 }
             }
         },
+
+        /**
+         * !#en The rotation as Euler angles in degrees, used in 3D node.
+         * !#zh 该节点的欧拉角度，用于 3D 节点。
+         * @property eulerAngles
+         * @type {Vec3}
+         * @example
+         * node.is3DNode = true;
+         * node.eulerAngles = cc.v3(45, 45, 45);
+         * cc.log("Node eulerAngles (X, Y, Z): " + node.eulerAngles.toString());
+         */
 
         /**
          * !#en Rotation on x axis.
          * !#zh 该节点 X 轴旋转角度。
          * @property rotationX
          * @type {Number}
+         * @deprecated since v2.1
          * @example
-         * node.rotationX = 45;
-         * cc.log("Node Rotation X: " + node.rotationX);
+         * node.is3DNode = true;
+         * node.eulerAngles = cc.v3(45, 0, 0);
+         * cc.log("Node eulerAngles X: " + node.eulerAngles.x);
          */
         rotationX: {
             get () {
-                return this._rotationX;
+                if (CC_DEBUG) {
+                    cc.warn("`cc.Node.rotationX` is deprecated since v2.1.0, please use `eulerAngles.x` instead. (`this.node.rotationX` -> `this.node.eulerAngles.x`)");
+                }
+                return this._eulerAngles.x;
             },
             set (value) {
-                if (this._rotationX !== value) {
-                    this._rotationX = value;
+                if (CC_DEBUG) {
+                    cc.warn("`cc.Node.rotationX` is deprecated since v2.1.0, please set `eulerAngles` instead. (`this.node.rotationX = x` -> `this.node.is3DNode = true; this.node.eulerAngles = cc.v3(x, 0, 0)`");
+                }
+                if (this._eulerAngles.x !== value) {
+                    this._eulerAngles.x = value;
                     // Update quaternion from rotation
-                    if (this._rotationX === this._rotationY) {
-                        math.quat.fromEuler(this._quat, 0, 0, -value);
+                    if (this._eulerAngles.x === this._eulerAngles.y) {
+                        trs.fromAngleZ(this._trs, -value);
                     }
                     else {
-                        math.quat.fromEuler(this._quat, value, this._rotationY, 0);
+                        trs.fromEulerNumber(this._trs, value, this._eulerAngles.y, 0);
                     }
                     this.setLocalDirty(LocalDirtyFlag.ROTATION);
-                    this._renderFlag |= RenderFlow.FLAG_TRANSFORM;
 
                     if (this._eventMask & ROTATION_ON) {
                         this.emit(EventType.ROTATION_CHANGED);
@@ -802,26 +879,33 @@ var Node = cc.Class({
          * !#zh 该节点 Y 轴旋转角度。
          * @property rotationY
          * @type {Number}
+         * @deprecated since v2.1
          * @example
-         * node.rotationY = 45;
-         * cc.log("Node Rotation Y: " + node.rotationY);
+         * node.is3DNode = true;
+         * node.eulerAngles = cc.v3(0, 45, 0);
+         * cc.log("Node eulerAngles Y: " + node.eulerAngles.y);
          */
         rotationY: {
             get () {
-                return this._rotationY;
+                if (CC_DEBUG) {
+                    cc.warn("`cc.Node.rotationY` is deprecated since v2.1.0, please use `eulerAngles.y` instead. (`this.node.rotationY` -> `this.node.eulerAngles.y`)");
+                }
+                return this._eulerAngles.y;
             },
             set (value) {
-                if (this._rotationY !== value) {
-                    this._rotationY = value;
+                if (CC_DEBUG) {
+                    cc.warn("`cc.Node.rotationY` is deprecated since v2.1.0, please set `eulerAngles` instead. (`this.node.rotationY = y` -> `this.node.is3DNode = true; this.node.eulerAngles = cc.v3(0, y, 0)`");
+                }
+                if (this._eulerAngles.y !== value) {
+                    this._eulerAngles.y = value;
                     // Update quaternion from rotation
-                    if (this._rotationX === this._rotationY) {
-                        math.quat.fromEuler(this._quat, 0, 0, -value);
+                    if (this._eulerAngles.x === this._eulerAngles.y) {
+                        trs.fromAngleZ(this._trs, -value);
                     }
                     else {
-                        math.quat.fromEuler(this._quat, this._rotationX, value, 0);
+                        trs.fromEulerNumber(this._trs, this._eulerAngles.x, value, 0);
                     }
                     this.setLocalDirty(LocalDirtyFlag.ROTATION);
-                    this._renderFlag |= RenderFlow.FLAG_TRANSFORM;
 
                     if (this._eventMask & ROTATION_ON) {
                         this.emit(EventType.ROTATION_CHANGED);
@@ -838,6 +922,14 @@ var Node = cc.Class({
          * @example
          * node.scale = 1;
          */
+        scale: {
+            get () {
+                return this._trs[7];
+            },
+            set (v) {
+                this.setScale(v);
+            }
+        },
 
         /**
          * !#en Scale on x axis.
@@ -850,13 +942,12 @@ var Node = cc.Class({
          */
         scaleX: {
             get () {
-                return this._scale.x;
+                return this._trs[7];
             },
             set (value) {
-                if (this._scale.x !== value) {
-                    this._scale.x = value;
+                if (this._trs[7] !== value) {
+                    this._trs[7] = value;
                     this.setLocalDirty(LocalDirtyFlag.SCALE);
-                    this._renderFlag |= RenderFlow.FLAG_TRANSFORM;
 
                     if (this._eventMask & SCALE_ON) {
                         this.emit(EventType.SCALE_CHANGED);
@@ -876,13 +967,12 @@ var Node = cc.Class({
          */
         scaleY: {
             get () {
-                return this._scale.y;
+                return this._trs[8];
             },
             set (value) {
-                if (this._scale.y !== value) {
-                    this._scale.y = value;
+                if (this._trs[8] !== value) {
+                    this._trs[8] = value;
                     this.setLocalDirty(LocalDirtyFlag.SCALE);
-                    this._renderFlag |= RenderFlow.FLAG_TRANSFORM;
 
                     if (this._eventMask & SCALE_ON) {
                         this.emit(EventType.SCALE_CHANGED);
@@ -890,6 +980,13 @@ var Node = cc.Class({
                 }
             },
         },
+
+        /**
+         * !#en Scale on z axis.
+         * !#zh 节点 Z 轴缩放。
+         * @property scaleZ
+         * @type {Number}
+         */
 
         /**
          * !#en Skew x
@@ -907,7 +1004,6 @@ var Node = cc.Class({
             set (value) {
                 this._skewX = value;
                 this.setLocalDirty(LocalDirtyFlag.SKEW);
-                this._renderFlag |= RenderFlow.FLAG_TRANSFORM;
             }
         },
 
@@ -927,7 +1023,6 @@ var Node = cc.Class({
             set (value) {
                 this._skewY = value;
                 this.setLocalDirty(LocalDirtyFlag.SKEW);
-                this._renderFlag |= RenderFlow.FLAG_TRANSFORM;
             }
         },
 
@@ -947,7 +1042,10 @@ var Node = cc.Class({
                 value = cc.misc.clampf(value, 0, 255);
                 if (this._opacity !== value) {
                     this._opacity = value;
-                    this._renderFlag |= RenderFlow.FLAG_OPACITY;
+                    if (CC_JSB && CC_NATIVERENDERER) {
+                        this._proxy.updateOpacity();
+                    };
+                    this._renderFlag |= RenderFlow.FLAG_OPACITY_COLOR;
                 }
             },
             range: [0, 255]
@@ -971,10 +1069,8 @@ var Node = cc.Class({
                     if (CC_DEV && value.a !== 255) {
                         cc.warnID(1626);
                     }
-                    
-                    if (this._renderComponent) {
-                        this._renderFlag |= RenderFlow.FLAG_COLOR;
-                    }
+
+                    this._renderFlag |= RenderFlow.FLAG_COLOR;
 
                     if (this._eventMask & COLOR_ON) {
                         this.emit(EventType.COLOR_CHANGED, value);
@@ -1122,10 +1218,15 @@ var Node = cc.Class({
 
                 if (this.zIndex !== value) {
                     this._localZOrder = (this._localZOrder & 0x0000ffff) | (value << 16);
+                    this.emit(EventType.SIBLING_ORDER_CHANGED);
 
                     if (this._parent) {
                         this._onSiblingIndexChanged();
                     }
+                }
+
+                if (CC_JSB && CC_NATIVERENDERER) {
+                    this._proxy.updateZOrder();
                 }
             }
         },
@@ -1150,14 +1251,20 @@ var Node = cc.Class({
         // Mouse event listener
         this._mouseListener = null;
 
-        this._matrix = mathPools.mat4.get();
-        this._worldMatrix = mathPools.mat4.get();
-        this._localMatDirty = LocalDirtyFlag.ALL;
-        this._worldMatDirty = true;
+        this._initDataFromPool();
 
         this._eventMask = 0;
         this._cullingMask = 1;
         this._childArrivalOrder = 1;
+
+        // Proxy
+        if (CC_JSB && CC_NATIVERENDERER) {
+            this._proxy = new renderer.NodeProxy(this._spaceInfo.unitID, this._spaceInfo.index, this._id, this._name);
+            this._proxy.init(this);
+        }
+        else {
+            this._renderFlag = RenderFlow.FLAG_TRANSFORM | RenderFlow.FLAG_OPACITY_COLOR;
+        }
     },
 
     statics: {
@@ -1167,7 +1274,6 @@ var Node = cc.Class({
         isNode (obj) {
             return obj instanceof Node && (obj.constructor === Node || !(obj instanceof cc.Scene));
         },
-
         BuiltinGroupIndex
     },
 
@@ -1213,10 +1319,12 @@ var Node = cc.Class({
             }
         }
 
-        // Recycle math objects
-        mathPools.mat4.put(this._matrix);
-        mathPools.mat4.put(this._worldMatrix);
-        this._matrix = this._worldMatrix = null;
+        if (CC_JSB && CC_NATIVERENDERER) {
+            this._proxy.destroy();
+            this._proxy = null;
+        }
+
+        this._backDataIntoPool();
 
         if (this._reorderChildDirty) {
             cc.director.__fastOff(cc.Director.EVENT_AFTER_UPDATE, this.sortAllChildren, this);
@@ -1258,7 +1366,7 @@ var Node = cc.Class({
 
     _onHierarchyChanged (oldParent) {
         this._updateOrderOfArrival();
-        _updateCullingMask(this);
+        this.groupIndex = _getActualGroupIndex(this);
         if (this._parent) {
             this._parent._delaySort();
         }
@@ -1267,48 +1375,103 @@ var Node = cc.Class({
         if (cc._widgetManager) {
             cc._widgetManager._nodesOrderDirty = true;
         }
+
+        // Node proxy
+        if (CC_JSB && CC_NATIVERENDERER) {
+            this._proxy.updateParent();
+        }
     },
 
     // INTERNAL
 
+    _initDataFromPool () {
+        if (!this._spaceInfo) {
+            if (CC_EDITOR || CC_TEST) {
+                this._spaceInfo = {
+                    trs: new Float32Array(10),
+                    localMat: new Float32Array(16),
+                    worldMat: new Float32Array(16),
+                }
+            } else {
+                this._spaceInfo = nodeMemPool.pop();            
+            }
+        }
+
+        let spaceInfo = this._spaceInfo;
+        this._matrix = mat4.create(spaceInfo.localMat);
+        mat4.identity(this._matrix);
+        this._worldMatrix = mat4.create(spaceInfo.worldMat);
+        mat4.identity(this._worldMatrix);
+        this._localMatDirty = LocalDirtyFlag.ALL;
+        this._worldMatDirty = true;
+
+        let trs = this._trs = this._spaceInfo.trs;
+        trs[0] = 0; // position.x
+        trs[1] = 0; // position.y
+        trs[2] = 0; // position.z
+        trs[3] = 0; // rotation.x
+        trs[4] = 0; // rotation.y
+        trs[5] = 0; // rotation.z
+        trs[6] = 1; // rotation.w
+        trs[7] = 1; // scale.x
+        trs[8] = 1; // scale.y
+        trs[9] = 1; // scale.z
+    },
+
+    _backDataIntoPool () {
+        if (!(CC_EDITOR || CC_TEST)) {
+            // push back to pool
+            nodeMemPool.push(this._spaceInfo);
+            this._matrix = null;
+            this._worldMatrix = null;
+            this._trs = null;
+            this._spaceInfo = null;
+        }
+    },
+
+    _toEuler () {
+        if (this.is3DNode) {
+            trs.toEuler(this._eulerAngles, this._trs);
+        }
+        else {
+            let z = Math.asin(this._trs[5]) / ONE_DEGREE * 2;
+            vec3.set(this._eulerAngles, 0, 0, z);
+        }
+    },
+
+    _fromEuler () {
+        if (this.is3DNode) {
+            trs.fromEuler(this._trs, this._eulerAngles);
+        }
+        else {
+            trs.fromAngleZ(this._trs, this._eulerAngles.z);
+        }
+    },
+
     _upgrade_1x_to_2x () {
-        // Upgrade scaleX, scaleY from v1.x
-        // TODO: remove in future version, 3.0 ?
-        if (this._scaleX !== undefined) {
-            this._scale.x = this._scaleX;
-            this._scaleX = undefined;
+        let trs = this._trs;
+        if (trs) {
+            let desTrs = trs;
+            trs = this._trs = this._spaceInfo.trs;
+            // just adapt to old trs
+            if (desTrs.length === 11) {
+                trs.set(desTrs.subarray(1));
+            } else {
+                trs.set(desTrs);
+            }
+        } else {
+            trs = this._trs = this._spaceInfo.trs;
         }
-        if (this._scaleY !== undefined) {
-            this._scale.y = this._scaleY;
-            this._scaleY = undefined;
-        }
+
         if (this._zIndex !== undefined) {
             this._localZOrder = this._zIndex << 16;
             this._zIndex = undefined;
         }
 
-        // TODO: remove _rotationX & _rotationY in future version, 3.0 ?
-        // Update quaternion from rotation, when upgrade from 1.x to 2.0
-        // If rotation x & y is 0 in old version, then update rotation from default quaternion is ok too
-        if (this._rotationX !== 0 || this._rotationY !== 0) {
-            if (this._rotationX === this._rotationY) {
-                math.quat.fromEuler(this._quat, 0, 0, -this._rotationX);
-            }
-            else {
-                math.quat.fromEuler(this._quat, this._rotationX, this._rotationY, 0);
-            }
-        }
-        // Update rotation from quaternion
-        else {
-            let rotx = this._quat.getRoll();
-            let roty = this._quat.getPitch();
-            if (rotx === 0 && roty === 0) {
-                this._rotationX = this._rotationY = -this._quat.getYaw();
-            }
-            else {
-                this._rotationX = rotx;
-                this._rotationY = roty;
-            }
+        this._fromEuler();
+
+        if (this._localZOrder !== 0) {
+            this._zIndex = (this._localZOrder & 0xffff0000) >> 16;
         }
 
         // Upgrade from 2.0.0 preview 4 & earlier versions
@@ -1317,19 +1480,16 @@ var Node = cc.Class({
             this._opacity = this._color.a;
             this._color.a = 255;
         }
+
+        if (CC_JSB && CC_NATIVERENDERER) {
+            this._renderFlag |= RenderFlow.FLAG_TRANSFORM | RenderFlow.FLAG_OPACITY_COLOR;
+        }
     },
 
     /*
      * The initializer for Node which will be called before all components onLoad
      */
     _onBatchCreated () {
-        this._upgrade_1x_to_2x();
-
-        this._updateOrderOfArrival();
-
-        // synchronize _cullingMask
-        this._cullingMask = 1 << _getActualGroupIndex(this);
-
         let prefabInfo = this._prefab;
         if (prefabInfo && prefabInfo.sync && prefabInfo.root === this) {
             if (CC_DEV) {
@@ -1338,6 +1498,13 @@ var Node = cc.Class({
             }
             PrefabHelper.syncWithPrefab(this);
         }
+
+        this._upgrade_1x_to_2x();
+
+        this._updateOrderOfArrival();
+
+        // synchronize groupIndex
+        this.groupIndex = _getActualGroupIndex(this);
 
         if (!this._activeInHierarchy) {
             // deactivate ActionManager and EventManager by default
@@ -1355,19 +1522,25 @@ var Node = cc.Class({
         if (children.length > 0) {
             this._renderFlag |= RenderFlow.FLAG_CHILDREN;
         }
+
+        if (CC_JSB && CC_NATIVERENDERER) {
+            this._proxy.initNative();
+        }
     },
 
     // the same as _onBatchCreated but untouch prefab
     _onBatchRestored () {
         this._upgrade_1x_to_2x();
 
-        this._cullingMask = 1 << _getActualGroupIndex(this);
+        this.groupIndex = _getActualGroupIndex(this);
 
         if (!this._activeInHierarchy) {
             // deactivate ActionManager and EventManager by default
-            if (ActionManagerExist) {
-                cc.director.getActionManager().pauseTarget(this);
-            }
+
+            // ActionManager may not be inited in the editor worker.
+            let manager = cc.director.getActionManager();
+            manager && manager.pauseTarget(this);
+
             eventManager.pauseTarget(this);
         }
 
@@ -1378,6 +1551,10 @@ var Node = cc.Class({
 
         if (children.length > 0) {
             this._renderFlag |= RenderFlow.FLAG_CHILDREN;
+        }
+
+        if (CC_JSB && CC_NATIVERENDERER) {
+            this._proxy.initNative();
         }
     },
 
@@ -1533,7 +1710,6 @@ var Node = cc.Class({
      */
     once (type, callback, target, useCapture) {
         let forDispatch = this._checknSetupSysEvent(type);
-        let eventType_hasOnceListener = '__ONCE_FLAG:' + type;
 
         let listeners = null;
         if (forDispatch && useCapture) {
@@ -1543,17 +1719,7 @@ var Node = cc.Class({
             listeners = this._bubblingListeners = this._bubblingListeners || new EventTarget();
         }
 
-        let hasOnceListener = listeners.hasEventListener(eventType_hasOnceListener, callback, target);
-        if (!hasOnceListener) {
-            let self = this;
-            let onceWrapper = function (arg1, arg2, arg3, arg4, arg5) {
-                self.off(type, onceWrapper, target);
-                listeners.remove(eventType_hasOnceListener, callback, target);
-                callback.call(this, arg1, arg2, arg3, arg4, arg5);
-            };
-            this.on(type, onceWrapper, target);
-            listeners.add(eventType_hasOnceListener, callback, target);
-        }
+        listeners.once(type, callback, target);
     },
 
     _onDispatch (type, callback, target, useCapture) {
@@ -1577,10 +1743,11 @@ var Node = cc.Class({
         }
 
         if ( !listeners.hasEventListener(type, callback, target) ) {
-            listeners.add(type, callback, target);
+            listeners.on(type, callback, target);
 
-            if (target && target.__eventTargets)
+            if (target && target.__eventTargets) {
                 target.__eventTargets.push(this);
+            }
         }
 
         return callback;
@@ -1664,7 +1831,7 @@ var Node = cc.Class({
         else {
             var listeners = useCapture ? this._capturingListeners : this._bubblingListeners;
             if (listeners) {
-                listeners.remove(type, callback, target);
+                listeners.off(type, callback, target);
 
                 if (target && target.__eventTargets) {
                     js.array.fastRemove(target.__eventTargets, this);
@@ -1709,6 +1876,10 @@ var Node = cc.Class({
         }
         if (this._capturingListeners) {
             this._capturingListeners.targetOff(target);
+        }
+
+        if (target && target.__eventTargets) {
+            js.array.fastRemove(target.__eventTargets, this);
         }
 
         if (this._touchListener && !_checkListeners(this, _touchEvents)) {
@@ -1812,12 +1983,12 @@ var Node = cc.Class({
     _hitTest (point, listener) {
         let w = this._contentSize.width,
             h = this._contentSize.height,
-            cameraPt = _vec2a,
-            testPt = _vec2b;
+            cameraPt = _htVec3a,
+            testPt = _htVec3b;
         
         let camera = cc.Camera.findCamera(this);
         if (camera) {
-            camera.getCameraToWorldPoint(point, cameraPt);
+            camera.getScreenToWorldPoint(point, cameraPt);
         }
         else {
             cameraPt.set(point);
@@ -1825,10 +1996,10 @@ var Node = cc.Class({
 
         this._updateWorldMatrix();
         // If scale is 0, it can't be hit.
-        if (!math.mat4.invert(_mat4_temp, this._worldMatrix)) {
+        if (!mat4.invert(_mat4_temp, this._worldMatrix)) {
             return false;
         }
-        math.vec2.transformMat4(testPt, cameraPt, _mat4_temp);
+        vec2.transformMat4(testPt, cameraPt, _mat4_temp);
         testPt.x += this._anchorPoint.x * w;
         testPt.y += this._anchorPoint.y * h;
 
@@ -1983,7 +2154,7 @@ var Node = cc.Class({
      * @method stopActionByTag
      * @param {Number} tag A tag that indicates the action to be removed.
      * @example
-     * node.stopAction(1);
+     * node.stopActionByTag(1);
      */
     stopActionByTag: ActionManagerExist ? function (tag) {
         if (tag === cc.Action.TAG_INVALID) {
@@ -2040,31 +2211,41 @@ var Node = cc.Class({
 
 // TRANSFORM RELATED
     /**
-     * !#en Returns a copy of the position (x, y) of the node in its parent's coordinates.
-     * !#zh 获取节点在父节点坐标系中的位置（x, y）。
+     * !#en
+     * Returns a copy of the position (x, y, z) of the node in its parent's coordinates.
+     * You can pass a cc.Vec2 or cc.Vec3 as the argument to receive the return values.
+     * !#zh
+     * 获取节点在父节点坐标系中的位置（x, y, z）。
+     * 你可以传一个 cc.Vec2 或者 cc.Vec3 作为参数来接收返回值。
      * @method getPosition
-     * @return {Vec2} The position (x, y) of the node in its parent's coordinates
+     * @param {Vec2|Vec3} [out] - The return value to receive position
+     * @return {Vec2|Vec3} The position (x, y, z) of the node in its parent's coordinates
      * @example
      * cc.log("Node Position: " + node.getPosition());
      */
-    getPosition () {
-        return new cc.Vec2(this._position);
+    getPosition (out) {
+        out = out || cc.v3();
+        return trs.toPosition(out, this._trs);
     },
 
     /**
      * !#en
-     * Sets the position (x, y) of the node in its parent's coordinates.<br/>
-     * Usually we use cc.v2(x, y) to compose cc.Vec2 object.<br/>
-     * and Passing two numbers (x, y) is more efficient than passing cc.Vec2 object.
+     * Sets the position (x, y, z) of the node in its parent's coordinates.<br/>
+     * Usually we use cc.v2(x, y) to compose cc.Vec2 object,<br/>
+     * and passing two numbers (x, y) is more efficient than passing cc.Vec2 object.
+     * For 3D node we can use cc.v3(x, y, z) to compose cc.Vec3 object,<br/>
+     * and passing three numbers (x, y, z) is more efficient than passing cc.Vec3 object.
      * !#zh
      * 设置节点在父节点坐标系中的位置。<br/>
-     * 可以通过两种方式设置坐标点：<br/>
-     * 1. 传入 2 个数值 x 和 y。<br/>
+     * 可以通过下面的方式设置坐标点：<br/>
+     * 1. 传入 2 个数值 x, y。<br/>
      * 2. 传入 cc.v2(x, y) 类型为 cc.Vec2 的对象。
+     * 3. 对于 3D 节点可以传入 3 个数值 x, y, z。<br/>
+     * 4. 对于 3D 节点可以传入 cc.v3(x, y, z) 类型为 cc.Vec3 的对象。
      * @method setPosition
-     * @param {Vec2|Number} newPosOrX - X coordinate for position or the position (x, y) of the node in coordinates
+     * @param {Vec2|Vec3|Number} newPosOrX - X coordinate for position or the position (x, y, z) of the node in coordinates
      * @param {Number} [y] - Y coordinate for position
-     * @example {@link cocos2d/core/utils/base-node/setPosition.js}
+     * @param {Number} [z] - Z coordinate for position
      */
     setPosition (newPosOrX, y) {
         var x;
@@ -2076,28 +2257,27 @@ var Node = cc.Class({
             x = newPosOrX;
         }
 
-        var locPosition = this._position;
-        if (locPosition.x === x && locPosition.y === y) {
+        var trs = this._trs;
+        if (trs[0] === x && trs[1] === y) {
             return;
         }
 
         if (CC_EDITOR) {
-            var oldPosition = new cc.Vec3(locPosition);
+            var oldPosition = new cc.Vec3(trs[0], trs[1], trs[2]);
         }
         if (!CC_EDITOR || isFinite(x)) {
-            locPosition.x = x;
+            trs[0] = x;
         }
         else {
             return cc.error(ERR_INVALID_NUMBER, 'x of new position');
         }
         if (!CC_EDITOR || isFinite(y)) {
-            locPosition.y = y;
+            trs[1] = y;
         }
         else {	
             return cc.error(ERR_INVALID_NUMBER, 'y of new position');
         }
         this.setLocalDirty(LocalDirtyFlag.POSITION);
-        this._renderFlag |= RenderFlow.FLAG_WORLD_TRANSFORM;
 
         // fast check event
         if (this._eventMask & POSITION_ON) {
@@ -2114,28 +2294,39 @@ var Node = cc.Class({
     /**
      * !#en
      * Returns the scale factor of the node.
-     * Assertion will fail when scale x != scale y.
-     * !#zh 获取节点的缩放。当 X 轴和 Y 轴有相同的缩放数值时。
+     * Need pass a cc.Vec2 or cc.Vec3 as the argument to receive the return values.
+     * !#zh 获取节点的缩放，需要传一个 cc.Vec2 或者 cc.Vec3 作为参数来接收返回值。
      * @method getScale
-     * @return {Number} The scale factor
+     * @param {Vec2|Vec3} out
+     * @return {Vec2|Vec3} The scale factor
      * @example
-     * cc.log("Node Scale: " + node.getScale());
+     * cc.log("Node Scale: " + node.getScale(cc.v3()));
      */
-    getScale () {
-        if (this._scale.x !== this._scale.y)
-            cc.logID(1603);
-        return this._scale.x;
+    getScale (out) {
+        if (out !== undefined) {
+            return trs.toScale(out, this._trs);
+        }
+        else {
+            cc.warnID(1400, 'cc.Node.getScale', 'cc.Node.scale or cc.Node.getScale(cc.Vec3)');
+            return this._trs[7];
+        }
     },
 
     /**
-     * !#en Sets the scale factor of the node. 1.0 is the default scale factor. This function can modify the X and Y scale at the same time.
-     * !#zh 设置节点的缩放比例，默认值为 1.0。这个函数可以在同一时间修改 X 和 Y 缩放。
+     * !#en
+     * Sets the scale of axis in local coordinates of the node.
+     * You can operate 2 axis in 2D node, and 3 axis in 3D node.
+     * !#zh
+     * 设置节点在本地坐标系中坐标轴上的缩放比例。
+     * 2D 节点可以操作两个坐标轴，而 3D 节点可以操作三个坐标轴。
      * @method setScale
-     * @param {Number|Vec2} scaleX - scaleX or scale
-     * @param {Number} [scaleY]
+     * @param {Number|Vec2|Vec3} x - scaleX or scale object
+     * @param {Number} [y]
+     * @param {Number} [z]
      * @example
-     * node.setScale(cc.v2(1, 1));
-     * node.setScale(1);
+     * node.setScale(cc.v2(2, 2));
+     * node.setScale(cc.v3(2, 2, 2)); // for 3D node
+     * node.setScale(2);
      */
     setScale (x, y) {
         if (x && typeof x !== 'number') {
@@ -2145,11 +2336,11 @@ var Node = cc.Class({
         else if (y === undefined) {
             y = x;
         }
-        if (this._scale.x !== x || this._scale.y !== y) {
-            this._scale.x = x;
-            this._scale.y = y;
+        let trs = this._trs;
+        if (trs[7] !== x || trs[8] !== y) {
+            trs[7] = x;
+            trs[8] = y;
             this.setLocalDirty(LocalDirtyFlag.SCALE);
-            this._renderFlag |= RenderFlow.FLAG_TRANSFORM;
 
             if (this._eventMask & SCALE_ON) {
                 this.emit(EventType.SCALE_CHANGED);
@@ -2158,18 +2349,70 @@ var Node = cc.Class({
     },
 
     /**
-     * !#en Set rotation of node (along z axi).
-     * !#zh 设置该节点以局部坐标系 Z 轴为轴进行旋转的角度。
-     * @method setRotation
-     * @param {Number} rotation Degree rotation value
+     * !#en
+     * Get rotation of node (in quaternion).
+     * Need pass a cc.Quat as the argument to receive the return values.
+     * !#zh
+     * 获取该节点的 quaternion 旋转角度，需要传一个 cc.Quat 作为参数来接收返回值。
+     * @method getRotation
+     * @param {Quat} out
+     * @return {Quat} Quaternion object represents the rotation
      */
+    getRotation (out) {
+        if (out instanceof cc.Quat) {
+            return trs.toRotation(out, this._trs);
+        }
+        else {
+            if (CC_DEBUG) {
+                cc.warn("`cc.Node.getRotation()` is deprecated since v2.1.0, please use `-cc.Node.angle` instead. (`this.node.getRotation()` -> `-this.node.angle`)");
+            }
+            return -this.angle;
+        }
+    },
 
     /**
-     * !#en Get rotation of node (along z axi).
-     * !#zh 获取该节点以局部坐标系 Z 轴为轴进行旋转的角度。
-     * @method getRotation
-     * @param {Number} rotation Degree rotation value
+     * !#en Set rotation of node (in quaternion).
+     * !#zh 设置该节点的 quaternion 旋转角度。
+     * @method setRotation
+     * @param {cc.Quat|Number} quat Quaternion object represents the rotation or the x value of quaternion
+     * @param {Number} [y] y value of quternion
+     * @param {Number} [z] z value of quternion
+     * @param {Number} [w] w value of quternion
      */
+    setRotation (quat, y, z, w) {
+        if (typeof quat === 'number' && y === undefined) {
+            if (CC_DEBUG) {
+                cc.warn("`cc.Node.setRotation(degree)` is deprecated since v2.1.0, please set `-cc.Node.angle` instead. (`this.node.setRotation(x)` -> `this.node.angle = -x`)");
+            }
+            this.angle = -quat;
+        }
+        else {
+            let x = quat;
+            if (y === undefined) {
+                x = quat.x;
+                y = quat.y;
+                z = quat.z;
+                w = quat.w;
+            }
+
+            let trs = this._trs;
+            if (trs[3] !== x || trs[4] !== y || trs[5] !== z || trs[6] !== w) {
+                trs[3] = x;
+                trs[4] = y;
+                trs[5] = z;
+                trs[6] = w;
+                this.setLocalDirty(LocalDirtyFlag.ROTATION);
+
+                if (this._eventMask & ROTATION_ON) {
+                    this.emit(EventType.ROTATION_CHANGED);
+                }
+
+                if (CC_EDITOR) {
+                    this._toEuler();
+                }
+            }
+        }
+    },
 
     /**
      * !#en
@@ -2304,19 +2547,23 @@ var Node = cc.Class({
         if (this._parent) {
             this._parent._invTransformPoint(out, pos);
         } else {
-            math.vec3.copy(out, pos);
+            vec3.copy(out, pos);
         }
 
+        let ltrs = this._trs;
         // out = parent_inv_pos - pos
-        math.vec3.sub(out, out, this._position);
+        trs.toPosition(_tpVec3a, ltrs);
+        vec3.sub(out, out, _tpVec3a);
 
         // out = inv(rot) * out
-        math.quat.conjugate(_quat_temp, this._quat);
-        math.vec3.transformQuat(out, out, _quat_temp);
+        trs.toRotation(_tpQuata, ltrs);
+        quat.conjugate(_tpQuatb, _tpQuata);
+        vec3.transformQuat(out, out, _tpQuatb);
 
         // out = (1/scale) * out
-        math.vec3.inverseSafe(_vec3_temp, this._scale);
-        math.vec3.mul(out, out, _vec3_temp);
+        trs.toScale(_tpVec3a, ltrs);
+        vec3.inverseSafe(_tpVec3b, _tpVec3a);
+        vec3.mul(out, out, _tpVec3b);
 
         return out;
     },
@@ -2324,20 +2571,25 @@ var Node = cc.Class({
     /*
      * Calculate and return world position.
      * This is not a public API yet, its usage could be updated
-     * @method getWorldPos
+     * @method getWorldPosition
      * @param {Vec3} out
      * @return {Vec3}
      */
-    getWorldPos (out) {
-        math.vec3.copy(out, this._position);
+    getWorldPosition (out) {
+        trs.toPosition(out, this._trs);
         let curr = this._parent;
+        let ltrs;
         while (curr) {
+            ltrs = curr._trs;
             // out = parent_scale * pos
-            math.vec3.mul(out, out, curr._scale);
+            trs.toScale(_gwpVec3, ltrs);
+            vec3.mul(out, out, _gwpVec3);
             // out = parent_quat * out
-            math.vec3.transformQuat(out, out, curr._quat);
+            trs.toRotation(_gwpQuat, ltrs);
+            vec3.transformQuat(out, out, _gwpQuat);
             // out = out + pos
-            math.vec3.add(out, out, curr._position);
+            trs.toPosition(_gwpVec3, ltrs);
+            vec3.add(out, out, _gwpVec3);
             curr = curr._parent;
         }
         return out;
@@ -2346,20 +2598,22 @@ var Node = cc.Class({
     /*
      * Set world position.
      * This is not a public API yet, its usage could be updated
-     * @method setWorldPos
+     * @method setWorldPosition
      * @param {Vec3} pos
      */
-    setWorldPos (pos) {
+    setWorldPosition (pos) {
+        let ltrs = this._trs;
         if (CC_EDITOR) {
-            var oldPosition = new cc.Vec3(this._position);
+            var oldPosition = new cc.Vec3(ltrs[0], ltrs[1], ltrs[2]);
         }
         // NOTE: this is faster than invert world matrix and transform the point
         if (this._parent) {
-            this._parent._invTransformPoint(this._position, pos);
+            this._parent._invTransformPoint(_swpVec3, pos);
         }
         else {
-            math.vec3.copy(this._position, pos);
+            vec3.copy(_swpVec3, pos);
         }
+        trs.fromPosition(ltrs, _swpVec3);
         this.setLocalDirty(LocalDirtyFlag.POSITION);
 
         // fast check event
@@ -2377,15 +2631,17 @@ var Node = cc.Class({
     /*
      * Calculate and return world rotation
      * This is not a public API yet, its usage could be updated
-     * @method getWorldRot
+     * @method getWorldRotation
      * @param {Quat} out
      * @return {Quat}
      */
-    getWorldRot (out) {
-        math.quat.copy(out, this._quat);
+    getWorldRotation (out) {
+        trs.toRotation(_gwrQuat, this._trs);
+        quat.copy(out, _gwrQuat);
         let curr = this._parent;
         while (curr) {
-            math.quat.mul(out, curr._quat, out);
+            trs.toRotation(_gwrQuat, curr._trs);
+            quat.mul(out, _gwrQuat, out);
             curr = curr._parent;
         }
         return out;
@@ -2394,40 +2650,86 @@ var Node = cc.Class({
     /*
      * Set world rotation with quaternion
      * This is not a public API yet, its usage could be updated
-     * @method setWorldRot
-     * @param {Quat} rot
+     * @method setWorldRotation
+     * @param {Quat} val
      */
-    setWorldRot (quat) {
+    setWorldRotation (val) {
         if (this._parent) {
-            this._parent.getWorldRot(this._quat);
-            math.quat.conjugate(this._quat, this._quat);
-            math.quat.mul(this._quat, this._quat, quat);
+            this._parent.getWorldRotation(_swrQuat);
+            quat.conjugate(_swrQuat, _swrQuat);
+            quat.mul(_swrQuat, _swrQuat, val);
         }
         else {
-            math.quat.copy(this._quat, quat);
+            quat.copy(_swrQuat, val);
+        }
+        trs.fromRotation(this._trs, _swrQuat);
+        if (CC_EDITOR) {
+            this._toEuler();
         }
         this.setLocalDirty(LocalDirtyFlag.ROTATION);
     },
 
+    /*
+     * Calculate and return world scale
+     * This is not a public API yet, its usage could be updated
+     * @method getWorldScale
+     * @param {Vec3} out
+     * @return {Vec3}
+     */
+    getWorldScale (out) {
+        trs.toScale(_gwsVec3, this._trs);
+        vec3.copy(out, _gwsVec3);
+        let curr = this._parent;
+        while (curr) {
+            trs.toScale(_gwsVec3, curr._trs);
+            vec3.mul(out, out, _gwsVec3);
+            curr = curr._parent;
+        }
+        return out;
+    },
+
+    /*
+     * Set world scale with vec3
+     * This is not a public API yet, its usage could be updated
+     * @method setWorldScale
+     * @param {Vec3} scale
+     */
+    setWorldScale (scale) {
+        if (this._parent) {
+            this._parent.getWorldScale(_swsVec3);
+            vec3.div(_swsVec3, scale, _swsVec3);
+        }
+        else {
+            vec3.copy(_swsVec3, scale);
+        }
+        trs.fromScale(this._trs, _swsVec3);
+        this.setLocalDirty(LocalDirtyFlag.SCALE);
+    },
+
     getWorldRT (out) {
-        let opos = _vec3_temp;
-        let orot = _quat_temp;
-        math.vec3.copy(opos, this._position);
-        math.quat.copy(orot, this._quat);
+        let opos = _gwrtVec3a;
+        let orot = _gwrtQuata;
+        let ltrs = this._trs;
+        trs.toPosition(opos, ltrs);
+        trs.toRotation(orot, ltrs);
 
         let curr = this._parent;
         while (curr) {
+            ltrs = curr._trs;
             // opos = parent_lscale * lpos
-            math.vec3.mul(opos, opos, curr._scale);
+            trs.toScale(_gwrtVec3b, ltrs);
+            vec3.mul(opos, opos, _gwrtVec3b);
             // opos = parent_lrot * opos
-            math.vec3.transformQuat(opos, opos, curr._quat);
+            trs.toRotation(_gwrtQuatb, ltrs);
+            vec3.transformQuat(opos, opos, _gwrtQuatb);
             // opos = opos + lpos
-            math.vec3.add(opos, opos, curr._position);
+            trs.toPosition(_gwrtVec3b, ltrs);
+            vec3.add(opos, opos, _gwrtVec3b);
             // orot = lrot * orot
-            math.quat.mul(orot, curr._quat, orot);
+            quat.mul(orot, _gwrtQuatb, orot);
             curr = curr._parent;
         }
-        math.mat4.fromRT(out, orot, opos);
+        mat4.fromRT(out, orot, opos);
         return out;
     },
 
@@ -2439,12 +2741,12 @@ var Node = cc.Class({
      * @param {Vec3} [up] - default is (0,1,0)
      */
     lookAt (pos, up) {
-        this.getWorldPos(_vec3_temp);
-        math.vec3.sub(_vec3_temp, _vec3_temp, pos); // NOTE: we use -z for view-dir
-        math.vec3.normalize(_vec3_temp, _vec3_temp);
-        math.quat.fromViewUp(_quat_temp, _vec3_temp, up);
+        this.getWorldPosition(_laVec3);
+        vec3.sub(_laVec3, _laVec3, pos); // NOTE: we use -z for view-dir
+        vec3.normalize(_laVec3, _laVec3);
+        quat.fromViewUp(_laQuat, _laVec3, up);
     
-        this.setWorldRot(_quat_temp);
+        this.setWorldRotation(_laQuat);
     },
 
     _updateLocalMatrix () {
@@ -2453,61 +2755,55 @@ var Node = cc.Class({
 
         // Update transform
         let t = this._matrix;
-        //math.mat4.fromRTS(t, this._quat, this._position, this._scale);
+        let tm = t.m;
+        let trs = this._trs;
 
-        if (dirtyFlag & (LocalDirtyFlag.RT | LocalDirtyFlag.SKEW)) {
-            let hasRotation = this._rotationX || this._rotationY;
+        if (dirtyFlag & (LocalDirtyFlag.RS | LocalDirtyFlag.SKEW)) {
+            let rotation = -this._eulerAngles.z;
             let hasSkew = this._skewX || this._skewY;
-            let sx = this._scale.x, sy = this._scale.y;
+            let sx = trs[7], sy = trs[8];
 
-            if (hasRotation || hasSkew) {
+            if (rotation || hasSkew) {
                 let a = 1, b = 0, c = 0, d = 1;
                 // rotation
-                if (hasRotation) {
-                    let rotationRadiansX = this._rotationX * ONE_DEGREE;
-                    c = Math.sin(rotationRadiansX);
-                    d = Math.cos(rotationRadiansX);
-                    if (this._rotationY === this._rotationX) {
-                        a = d;
-                        b = -c;
-                    }
-                    else {
-                        let rotationRadiansY = this._rotationY * ONE_DEGREE;
-                        a = Math.cos(rotationRadiansY);
-                        b = -Math.sin(rotationRadiansY);
-                    }
+                if (rotation) {
+                    let rotationRadians = rotation * ONE_DEGREE;
+                    c = Math.sin(rotationRadians);
+                    d = Math.cos(rotationRadians);
+                    a = d;
+                    b = -c;
                 }
                 // scale
-                t.m00 = a *= sx;
-                t.m01 = b *= sx;
-                t.m04 = c *= sy;
-                t.m05 = d *= sy;
+                tm[0] = a *= sx;
+                tm[1] = b *= sx;
+                tm[4] = c *= sy;
+                tm[5] = d *= sy;
                 // skew
                 if (hasSkew) {
-                    let a = t.m00, b = t.m01, c = t.m04, d = t.m05;
+                    let a = tm[0], b = tm[1], c = tm[4], d = tm[5];
                     let skx = Math.tan(this._skewX * ONE_DEGREE);
                     let sky = Math.tan(this._skewY * ONE_DEGREE);
                     if (skx === Infinity)
                         skx = 99999999;
                     if (sky === Infinity)
                         sky = 99999999;
-                    t.m00 = a + c * sky;
-                    t.m01 = b + d * sky;
-                    t.m04 = c + a * skx;
-                    t.m05 = d + b * skx;
+                    tm[0] = a + c * sky;
+                    tm[1] = b + d * sky;
+                    tm[4] = c + a * skx;
+                    tm[5] = d + b * skx;
                 }
             }
             else {
-                t.m00 = sx;
-                t.m01 = 0;
-                t.m04 = 0;
-                t.m05 = sy;
+                tm[0] = sx;
+                tm[1] = 0;
+                tm[4] = 0;
+                tm[5] = sy;
             }
         }
 
         // position
-        t.m12 = this._position.x;
-        t.m13 = this._position.y;
+        tm[12] = trs[0];
+        tm[13] = trs[1];
         
         this._localMatDirty = 0;
         // Register dirty status of world matrix so that it can be recalculated
@@ -2523,32 +2819,34 @@ var Node = cc.Class({
         // Assume parent world matrix is correct
         let parent = this._parent;
         if (parent) {
-            let pt = parent._worldMatrix;
-            let t = this._matrix;
-            let wt = this._worldMatrix;
-            let aa=t.m00, ab=t.m01, ac=t.m04, ad=t.m05, atx=t.m12, aty=t.m13;
-            let ba=pt.m00, bb=pt.m01, bc=pt.m04, bd=pt.m05, btx=pt.m12, bty=pt.m13;
-            if (bb !== 0 || bc !== 0) {
-                wt.m00 = aa * ba + ab * bc;
-                wt.m01 = aa * bb + ab * bd;
-                wt.m04 = ac * ba + ad * bc;
-                wt.m05 = ac * bb + ad * bd;
-                wt.m12 = ba * atx + bc * aty + btx;
-                wt.m13 = bb * atx + bd * aty + bty;
-            }
-            else {
-                wt.m00 = aa * ba;
-                wt.m01 = ab * bd;
-                wt.m04 = ac * ba;
-                wt.m05 = ad * bd;
-                wt.m12 = ba * atx + btx;
-                wt.m13 = bd * aty + bty;
-            }
+            this._mulMat(this._worldMatrix, parent._worldMatrix, this._matrix);
         }
         else {
-            math.mat4.copy(this._worldMatrix, this._matrix);
+            mat4.copy(this._worldMatrix, this._matrix);
         }
         this._worldMatDirty = false;
+    },
+
+    _mulMat (out, a, b) {
+        let am = a.m, bm = b.m, outm = out.m;
+        let aa=am[0], ab=am[1], ac=am[4], ad=am[5], atx=am[12], aty=am[13];
+        let ba=bm[0], bb=bm[1], bc=bm[4], bd=bm[5], btx=bm[12], bty=bm[13];
+        if (ab !== 0 || ac !== 0) {
+            outm[0] = ba * aa + bb * ac;
+            outm[1] = ba * ab + bb * ad;
+            outm[4] = bc * aa + bd * ac;
+            outm[5] = bc * ab + bd * ad;
+            outm[12] = aa * btx + ac * bty + atx;
+            outm[13] = ab * btx + ad * bty + aty;
+        }
+        else {
+            outm[0] = ba * aa;
+            outm[1] = bb * ad;
+            outm[4] = bc * aa;
+            outm[5] = bd * ad;
+            outm[12] = aa * btx + atx;
+            outm[13] = ad * bty + aty;
+        }
     },
 
     _updateWorldMatrix () {
@@ -2566,8 +2864,15 @@ var Node = cc.Class({
     },
 
     setLocalDirty (flag) {
-        this._localMatDirty = this._localMatDirty | flag;
+        this._localMatDirty |= flag;
         this._worldMatDirty = true;
+
+        if (flag === LocalDirtyFlag.POSITION) {
+            this._renderFlag |= RenderFlow.FLAG_WORLD_TRANSFORM;
+        }
+        else {
+            this._renderFlag |= RenderFlow.FLAG_TRANSFORM;
+        }        
     },
 
     setWorldDirty () {
@@ -2587,7 +2892,7 @@ var Node = cc.Class({
      */
     getLocalMatrix (out) {
         this._updateLocalMatrix();
-        return math.mat4.copy(out, this._matrix);
+        return mat4.copy(out, this._matrix);
     },
     
     /**
@@ -2603,10 +2908,67 @@ var Node = cc.Class({
      */
     getWorldMatrix (out) {
         this._updateWorldMatrix();
-        return math.mat4.copy(out, this._worldMatrix);
+        return mat4.copy(out, this._worldMatrix);
     },
 
     /**
+     * !#en
+     * Converts a Point to node (local) space coordinates.
+     * !#zh
+     * 将一个点转换到节点 (局部) 空间坐标系。
+     * @method convertToNodeSpaceAR
+     * @param {Vec3|Vec2} worldPoint
+     * @param {Vec3|Vec2} [out]
+     * @return {Vec3|Vec2}
+     * @typescript
+     * convertToNodeSpaceAR<T extends cc.Vec2 | cc.Vec3>(worldPoint: T, out?: T): T
+     * @example
+     * var newVec2 = node.convertToNodeSpaceAR(cc.v2(100, 100));
+     * var newVec3 = node.convertToNodeSpaceAR(cc.v3(100, 100, 100));
+     */
+    convertToNodeSpaceAR (worldPoint, out) {
+        this._updateWorldMatrix();
+        mat4.invert(_mat4_temp, this._worldMatrix);
+
+        if (worldPoint instanceof cc.Vec2) {
+            out = out || new cc.Vec2();
+            return vec2.transformMat4(out, worldPoint, _mat4_temp);
+        }
+        else {
+            out = out || new cc.Vec3();
+            return vec3.transformMat4(out, worldPoint, _mat4_temp);
+        }
+    },
+
+    /**
+     * !#en
+     * Converts a Point in node coordinates to world space coordinates.
+     * !#zh
+     * 将节点坐标系下的一个点转换到世界空间坐标系。
+     * @method convertToWorldSpaceAR
+     * @param {Vec3|Vec2} nodePoint
+     * @param {Vec3|Vec2} [out]
+     * @return {Vec3|Vec2}
+     * @typescript
+     * convertToWorldSpaceAR<T extends cc.Vec2 | cc.Vec3>(nodePoint: T, out?: T): T
+     * @example
+     * var newVec2 = node.convertToWorldSpaceAR(cc.v2(100, 100));
+     * var newVec3 = node.convertToWorldSpaceAR(cc.v3(100, 100, 100));
+     */
+    convertToWorldSpaceAR (nodePoint, out) {
+        this._updateWorldMatrix();
+        if (nodePoint instanceof cc.Vec2) {
+            out = out || new cc.Vec2();
+            return vec2.transformMat4(out, nodePoint, this._worldMatrix);
+        }
+        else {
+            out = out || new cc.Vec3();
+            return vec3.transformMat4(out, nodePoint, this._worldMatrix);
+        }
+    },
+
+// OLD TRANSFORM ACCESS APIs
+ /**
      * !#en Converts a Point to node (local) space coordinates then add the anchor point position.
      * So the return position will be related to the left bottom corner of the node's bounding box.
      * This equals to the API behavior of cocos2d-x, you probably want to use convertToNodeSpaceAR instead
@@ -2614,6 +2976,7 @@ var Node = cc.Class({
      * 也就是说返回的坐标是相对于节点包围盒左下角的坐标。<br/>
      * 这个 API 的设计是为了和 cocos2d-x 中行为一致，更多情况下你可能需要使用 convertToNodeSpaceAR。
      * @method convertToNodeSpace
+     * @deprecated since v2.1.3
      * @param {Vec2} worldPoint
      * @return {Vec2}
      * @example
@@ -2621,9 +2984,9 @@ var Node = cc.Class({
      */
     convertToNodeSpace (worldPoint) {
         this._updateWorldMatrix();
-        math.mat4.invert(_mat4_temp, this._worldMatrix);
+        mat4.invert(_mat4_temp, this._worldMatrix);
         let out = new cc.Vec2();
-        math.vec2.transformMat4(out, worldPoint, _mat4_temp);
+        vec2.transformMat4(out, worldPoint, _mat4_temp);
         out.x += this._anchorPoint.x * this._contentSize.width;
         out.y += this._anchorPoint.y * this._contentSize.height;
         return out;
@@ -2635,6 +2998,7 @@ var Node = cc.Class({
      * !#zh 将一个相对于节点左下角的坐标位置转换到世界空间坐标系。
      * 这个 API 的设计是为了和 cocos2d-x 中行为一致，更多情况下你可能需要使用 convertToWorldSpaceAR
      * @method convertToWorldSpace
+     * @deprecated since v2.1.3
      * @param {Vec2} nodePoint
      * @return {Vec2}
      * @example
@@ -2646,45 +3010,9 @@ var Node = cc.Class({
             nodePoint.x - this._anchorPoint.x * this._contentSize.width,
             nodePoint.y - this._anchorPoint.y * this._contentSize.height
         );
-        return math.vec2.transformMat4(out, out, this._worldMatrix);
+        return vec2.transformMat4(out, out, this._worldMatrix);
     },
 
-    /**
-     * !#en
-     * Converts a Point to node (local) space coordinates in which the anchor point is the origin position.
-     * !#zh
-     * 将一个点转换到节点 (局部) 空间坐标系，这个坐标系以锚点为原点。
-     * @method convertToNodeSpaceAR
-     * @param {Vec2} worldPoint
-     * @return {Vec2}
-     * @example
-     * var newVec2 = node.convertToNodeSpaceAR(cc.v2(100, 100));
-     */
-    convertToNodeSpaceAR (worldPoint) {
-        this._updateWorldMatrix();
-        math.mat4.invert(_mat4_temp, this._worldMatrix);
-        let out = new cc.Vec2();
-        return math.vec2.transformMat4(out, worldPoint, _mat4_temp);
-    },
-
-    /**
-     * !#en
-     * Converts a Point in node coordinates to world space coordinates.
-     * !#zh
-     * 将节点坐标系下的一个点转换到世界空间坐标系。
-     * @method convertToWorldSpaceAR
-     * @param {Vec2} nodePoint
-     * @return {Vec2}
-     * @example
-     * var newVec2 = node.convertToWorldSpaceAR(cc.v2(100, 100));
-     */
-    convertToWorldSpaceAR (nodePoint) {
-        this._updateWorldMatrix();
-        let out = new cc.Vec2();
-        return math.vec2.transformMat4(out, nodePoint, this._worldMatrix);
-    },
-
-// OLD TRANSFORM ACCESS APIs
     /**
      * !#en
      * Returns the matrix that transform the node's (local) space coordinates into the parent's space coordinates.<br/>
@@ -2703,13 +3031,13 @@ var Node = cc.Class({
             out = AffineTrans.identity();
         }
         this._updateLocalMatrix();
-               
+        
         var contentSize = this._contentSize;
         _vec3_temp.x = -this._anchorPoint.x * contentSize.width;
         _vec3_temp.y = -this._anchorPoint.y * contentSize.height;
 
-        math.mat4.copy(_mat4_temp, this._matrix);
-        math.mat4.translate(_mat4_temp, _mat4_temp, _vec3_temp);
+        mat4.copy(_mat4_temp, this._matrix);
+        mat4.translate(_mat4_temp, _mat4_temp, _vec3_temp);
         return AffineTrans.fromMat4(out, _mat4_temp);
     },
 
@@ -2759,8 +3087,8 @@ var Node = cc.Class({
         _vec3_temp.x = -this._anchorPoint.x * contentSize.width;
         _vec3_temp.y = -this._anchorPoint.y * contentSize.height;
 
-        math.mat4.copy(_mat4_temp, this._worldMatrix);
-        math.mat4.translate(_mat4_temp, _mat4_temp, _vec3_temp);
+        mat4.copy(_mat4_temp, this._worldMatrix);
+        mat4.translate(_mat4_temp, _mat4_temp, _vec3_temp);
 
         return AffineTrans.fromMat4(out, _mat4_temp);
     },
@@ -2808,7 +3136,7 @@ var Node = cc.Class({
             out = AffineTrans.identity();
         }
         this._updateLocalMatrix();
-        math.mat4.invert(_mat4_temp, this._matrix);
+        mat4.invert(_mat4_temp, this._matrix);
         return AffineTrans.fromMat4(out, _mat4_temp);
     },
 
@@ -2828,7 +3156,7 @@ var Node = cc.Class({
             out = AffineTrans.identity();
         }
         this._updateWorldMatrix();
-        math.mat4.invert(_mat4_temp, this._worldMatrix);
+        mat4.invert(_mat4_temp, this._worldMatrix);
         return AffineTrans.fromMat4(out, _mat4_temp);
     },
 
@@ -2914,7 +3242,7 @@ var Node = cc.Class({
             width, 
             height);
 
-        var parentMat = math.mat4.mul(this._worldMatrix, parentMat, this._matrix);
+        var parentMat = mat4.mul(this._worldMatrix, parentMat, this._matrix);
         rect.transformMat4(rect, parentMat);
 
         //query child's BoundingBox
@@ -2946,6 +3274,7 @@ var Node = cc.Class({
 
             this._parent._childArrivalOrder = siblings.length;
         }
+        this.emit(EventType.SIBLING_ORDER_CHANGED);
     },
 
     /**
@@ -3052,20 +3381,25 @@ var Node = cc.Class({
          * The node will be destroyed when deleting in the editor,
          * but it will be reserved and reused for undo.
         */
+        // restore 3d node
+        this.is3DNode = this.is3DNode;
         if (!this._matrix) {
-            this._matrix = mathPools.mat4.get();
+            this._matrix = mat4.create(this._spaceInfo.localMat);
+            mat4.identity(this._matrix);
         }
         if (!this._worldMatrix) {
-            this._worldMatrix = mathPools.mat4.get();
+            this._worldMatrix = mat4.create(this._spaceInfo.worldMat);
+            mat4.identity(this._worldMatrix);
         }
 
         this._localMatDirty = LocalDirtyFlag.ALL;
         this._worldMatDirty = true;
 
+        this._fromEuler();
+
         this._renderFlag |= RenderFlow.FLAG_TRANSFORM;
         if (this._renderComponent) {
             if (this._renderComponent.enabled) {
-                this._renderFlag |= RenderFlow.FLAG_COLOR;
                 this._renderComponent.markForUpdateRenderData(true);
             }
             else {
@@ -3092,8 +3426,39 @@ var Node = cc.Class({
             actionManager && actionManager.pauseTarget(this);
             eventManager.pauseTarget(this);
         }
-    }
-});
+    },
+};
+
+if (CC_EDITOR) {
+    // deprecated, only used to import old data in editor
+    js.mixin(NodeDefines.properties, {
+        _scaleX: {
+            default: undefined,
+            type: cc.Float,
+            editorOnly: true
+        },
+        _scaleY: {
+            default: undefined,
+            type: cc.Float,
+            editorOnly: true
+        },
+    });
+}
+
+let Node = cc.Class(NodeDefines);
+
+// 3D Node Property
+
+/**
+ * !en
+ * Switch 2D/3D node. The 2D nodes will run faster.
+ * !zh
+ * 切换 2D/3D 节点，2D 节点会有更高的运行效率
+ * @property {Boolean} is3DNode
+ * @default false
+*/
+
+// Node Event
 
 /**
  * !#en
@@ -3163,7 +3528,7 @@ var Node = cc.Class({
  * 显示透明度是基于自身透明度和父节点透明度计算的。
  *
  * @method getDisplayedOpacity
- * @returns {number} displayed opacity
+ * @return {number} displayed opacity
  * @deprecated since v2.0, please use opacity property, cascade opacity is removed
  */
 
@@ -3177,7 +3542,7 @@ var Node = cc.Class({
  * 显示颜色是基于自身颜色和父节点颜色计算的。
  *
  * @method getDisplayedColor
- * @returns {Color}
+ * @return {Color}
  * @deprecated since v2.0, please use color property, cascade color is removed
  */
 
@@ -3198,7 +3563,7 @@ var Node = cc.Class({
  * 返回节点的不透明度值是否影响其子节点。
  * @method isCascadeOpacityEnabled
  * @deprecated since v2.0
- * @returns {Boolean}
+ * @return {Boolean}
  */
 
 /**
@@ -3232,7 +3597,8 @@ var Node = cc.Class({
  * @return {Boolean}
  */
 
-var SameNameGetSets = ['position', 'scale', 'rotation'];
-misc.propertyDefine(Node, SameNameGetSets);
+
+let _p = Node.prototype;
+js.getset(_p, 'position', _p.getPosition, _p.setPosition, false, true);
 
 cc.Node = module.exports = Node;

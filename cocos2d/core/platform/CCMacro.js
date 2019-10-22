@@ -25,8 +25,6 @@
  THE SOFTWARE.
  ****************************************************************************/
 
-const js = require('./js');
-
 /**
  * Predefined constants
  * @class macro
@@ -343,18 +341,44 @@ cc.macro = {
      * @default false
      */
     CLEANUP_IMAGE_CACHE: false,
+
+    /**
+     * !#en
+     * Whether or not show mesh wire frame.
+     * !#zh
+     * 是否显示网格的线框。
+     * @property {Boolean} SHOW_MESH_WIREFRAME
+     * @default false
+     */
+    SHOW_MESH_WIREFRAME: false,
+
+    /**
+     * !#en
+     * Set cc.RotateTo/cc.RotateBy rotate direction.
+     * If need set rotate positive direction to counterclockwise, please change setting to : cc.macro.ROTATE_ACTION_CCW = true;
+     * !#zh
+     * 设置 cc.RotateTo/cc.RotateBy 的旋转方向。
+     * 如果需要设置旋转的正方向为逆时针方向，请设置选项为： cc.macro.ROTATE_ACTION_CCW = true;
+     * @property {Boolean} ROTATE_ACTION_CCW
+     * @default false
+     */
+    ROTATE_ACTION_CCW: false
 };
 
-js.getset(cc.macro, 'ENABLE_3D', function () {
-    return cc._polyfill3D.enabled;
-}, function (enabled) {
-    if (enabled) {
-        cc._polyfill3D.enable();
-    }
-    else {
-        cc._polyfill3D.disable();
-    }
-});
+
+let SUPPORT_TEXTURE_FORMATS = ['.pkm', '.pvr', '.webp', '.jpg', '.jpeg', '.bmp', '.png'];
+
+/**
+ * !en
+ * The image format supported by the engine defaults, and the supported formats may differ in different build platforms and device types.
+ * Currently all platform and device support ['.webp', '.jpg', '.jpeg', '.bmp', '.png'], The iOS mobile platform also supports the PVR format。
+ * !zh
+ * 引擎默认支持的图片格式，支持的格式可能在不同的构建平台和设备类型上有所差别。
+ * 目前所有平台和设备支持的格式有 ['.webp', '.jpg', '.jpeg', '.bmp', '.png']. 另外 Ios 手机平台还额外支持了 PVR 格式。
+ * @property {[String]} SUPPORT_TEXTURE_FORMATS
+ */
+cc.macro.SUPPORT_TEXTURE_FORMATS = SUPPORT_TEXTURE_FORMATS;
+
 
 /**
  * !#en Key map for keyboard event

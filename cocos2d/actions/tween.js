@@ -22,7 +22,7 @@ let TweenAction = cc.Class({
 
             // property may have custom easing or progress function
             let easing, progress;
-            if (value.value && (value.easing || value.progress)) {
+            if (value.value !== undefined && (value.easing || value.progress)) {
                 if (typeof value.easing === 'string') {
                     easing = cc.easing[value.easing];
                     !easing && cc.warnID(1031, value.easing);
@@ -158,6 +158,7 @@ let SetAction = cc.Class({
  *  - 支持与 cc.Action 混用
  *  - 支持设置 {{#crossLink "Easing"}}{{/crossLink}} 或者 progress 函数
  * @class Tween
+ * @param {Object} [target]
  * @example
  * cc.tween(node)
  *   .to(1, {scale: 2, position: cc.v3(100, 100, 100)})
@@ -262,6 +263,7 @@ Tween.prototype.clone = function (target) {
  * Integrate all previous actions to an action.
  * !#zh
  * 将之前所有的 action 整合为一个 action。
+ * @method union
  * @return {Tween}
  */
 Tween.prototype.union = function () {
@@ -309,9 +311,9 @@ let actions = {
      * @method to
      * @param {Number} duration 
      * @param {Object} props - {scale: 2, position: cc.v3(100, 100, 100)}
-     * @param {Object} opts 
-     * @param {Function} opts.progress
-     * @param {Function|String} opts.easing
+     * @param {Object} [opts] 
+     * @param {Function} [opts.progress]
+     * @param {Function|String} [opts.easing]
      * @return {Tween}
      */
     to (duration, props, opts) {
@@ -328,9 +330,9 @@ let actions = {
      * @method by
      * @param {Number} duration 
      * @param {Object} props - {scale: 2, position: cc.v3(100, 100, 100)}
-     * @param {Object} opts 
-     * @param {Function} opts.progress
-     * @param {Function|String} opts.easing
+     * @param {Object} [opts] 
+     * @param {Function} [opts.progress]
+     * @param {Function|String} [opts.easing]
      * @return {Tween}
      */
     by (duration, props, opts) {
@@ -405,7 +407,8 @@ let actions = {
      * !#zh
      * 添加一个队列 action
      * @method sequence
-     * @param {[Action|Tween]} actions
+     * @param {Action|Tween} action
+     * @param {Action|Tween} ...actions
      * @return {Tween}
      */
     sequence: wrapAction(cc.sequence),
@@ -415,7 +418,8 @@ let actions = {
      * !#zh
      * 添加一个并行 action
      * @method parallel
-     * @param {[Action|Tween]} actions
+     * @param {Action|Tween} action
+     * @param {Action|Tween} ...actions
      * @return {Tween}
      */
     parallel: wrapAction(cc.spawn)
@@ -431,7 +435,7 @@ let previousAsInputActions = {
      * 添加一个重复 action，这个 action 会将前一个动作作为他的参数。
      * @method repeat
      * @param {Number} repeatTimes 
-     * @param {Action|Tween} [action]
+     * @param {Action | Tween} [action]
      * @return {Tween}
      */
     repeat: cc.repeat,
@@ -442,10 +446,13 @@ let previousAsInputActions = {
      * !#zh
      * 添加一个永久重复 action，这个 action 会将前一个动作作为他的参数。
      * @method repeatForever
-     * @param {Action|Tween} [action]
+     * @param {Action | Tween} [action]
      * @return {Tween}
      */
-    repeatForever: cc.repeatForever,
+    repeatForever: function (action) {
+        // TODO: fixed with cc.repeatForever
+        return cc.repeat(action, 10e8);
+    },
     /**
      * !#en
      * Add an reverse time action.
@@ -453,7 +460,7 @@ let previousAsInputActions = {
      * !#zh
      * 添加一个倒置时间 action，这个 action 会将前一个动作作为他的参数。
      * @method reverseTime
-     * @param {Action|Tween} [action]
+     * @param {Action | Tween} [action]
      * @return {Tween}
      */
     reverseTime: cc.reverseTime,
@@ -499,6 +506,10 @@ for (let i = 0; i < keys.length; i++) {
         return this;
     };
 }
+
+/**
+ * @module cc
+ */
 
 /**
  * @method tween

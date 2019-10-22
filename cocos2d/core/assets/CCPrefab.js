@@ -117,6 +117,15 @@ var Prefab = cc.Class({
          * @default false
          */
         asyncLoadAssets: false,
+
+        /**
+         * @property {Boolean} readonly
+         * @default false
+         */
+        readonly: {
+            default: false,
+            editorOnly: true
+        }
     },
 
     statics: {
@@ -194,7 +203,12 @@ var Prefab = cc.Class({
             PrefabUtils.linkPrefab(this, node);
         }
         return node;
-    }
+    },
+
+    destroy () {
+        this.data && this.data.destroy();
+        this._super();
+    },
 });
 
 cc.Prefab = module.exports = Prefab;

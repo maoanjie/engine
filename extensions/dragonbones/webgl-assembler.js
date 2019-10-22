@@ -22,15 +22,15 @@
  OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
  THE SOFTWARE.
  ****************************************************************************/
+
+import Assembler from '../../cocos2d/core/renderer/assembler';
+
 const Armature = require('./ArmatureDisplay');
-const renderEngine = require('../../cocos2d/core/renderer/render-engine');
 const RenderFlow = require('../../cocos2d/core/renderer/render-flow');
-const gfx = renderEngine.gfx;
-const math = require('../../cocos2d/core/renderer/render-engine').math;
-const NEED_NONE = 0x00;
+const gfx = cc.gfx;
+const mat4 = cc.vmath.mat4;
 const NEED_COLOR = 0x01;
 const NEED_BATCH = 0x10;
-const NEED_COLOR_BATCH = 0x11;
 
 let _boneColor = cc.color(255, 0, 0, 255);
 let _slotColor = cc.color(0, 0, 255, 255);
@@ -72,28 +72,29 @@ function _getSlotMaterial (tex, blendMode) {
     let useModel = !_comp.enableBatch;
     // Add useModel flag due to if pre same db useModel but next db no useModel,
     // then next db will multiply model matrix more than once.
-    let key = tex.url + src + dst + useModel;
-    let baseMaterial = _comp._material;
-    if (!baseMaterial) return null;
+    let key = tex.getId() + src + dst + useModel;
+    let baseMaterial = _comp.sharedMaterials[0];
+    if (!baseMaterial) {
+        return null;
+    }
     let materialCache = _comp._materialCache;
+
     let material = materialCache[key];
     if (!material) {
-
-        var baseKey = baseMaterial._hash;
+        let baseKey = baseMaterial._hash;
         if (!materialCache[baseKey]) {
             material = baseMaterial;
         } else {
-            material = baseMaterial.clone();
+            material = new cc.Material();
+            material.copy(baseMaterial);
         }
 
-        material.useModel = useModel;
-        // update texture
-        material.texture = tex;
-        material.useColor = false;
+        material.define('CC_USE_MODEL', useModel);
+        material.setProperty('texture', tex);
 
         // update blend function
-        let pass = material._mainTech.passes[0];
-        pass.setBlend(
+        material.effect.setBlend(
+            true,
             gfx.BLEND_FUNC_ADD,
             src, dst,
             gfx.BLEND_FUNC_ADD,
@@ -103,7 +104,7 @@ function _getSlotMaterial (tex, blendMode) {
         material.updateHash(key);
     }
     else if (material.texture !== tex) {
-        material.texture = tex;
+        material.setProperty('texture', tex);
         material.updateHash(key);
     }
     return material;
@@ -118,8 +119,8 @@ function _handleColor (color, parentOpacity) {
     _c = ((_a<<24) >>> 0) + (_b<<16) + (_g<<8) + _r;
 }
 
-let armatureAssembler = {
-    updateRenderData (comp, batchData) {},
+export default class ArmatureAssembler extends Assembler {
+    updateRenderData (comp, batchData) {}
 
     realTimeTraverse (armature, parentMat, parentOpacity) {
         let slots = armature._slots;
@@ -129,6 +130,7 @@ let armatureAssembler = {
         let slotColor;
         let slot;
         let slotMat;
+        let slotMatm;
         let offsetInfo;
 
         for (let i = 0, l = slots.length; i < l; i++) {
@@ -140,7 +142,7 @@ let armatureAssembler = {
             if (parentMat) {
                 slot._mulMat(slot._worldMatrix, parentMat, slot._matrix);
             } else {
-                math.mat4.copy(slot._worldMatrix, slot._matrix);
+                mat4.copy(slot._worldMatrix, slot._matrix);
             }
 
             if (slot.childArmature) {
@@ -162,6 +164,7 @@ let armatureAssembler = {
 
             _handleColor(slotColor, parentOpacity);
             slotMat = slot._worldMatrix;
+            slotMatm = slotMat.m;
 
             vertices = slot._localVertices;
             _vertexCount = vertices.length >> 2;
@@ -177,12 +180,12 @@ let armatureAssembler = {
             ibuf = _buffer._iData;
             uintbuf = _buffer._uintVData;
 
-            _m00 = slotMat.m00;
-            _m04 = slotMat.m04;
-            _m12 = slotMat.m12;
-            _m01 = slotMat.m01;
-            _m05 = slotMat.m05;
-            _m13 = slotMat.m13;
+            _m00 = slotMatm[0];
+            _m04 = slotMatm[4];
+            _m12 = slotMatm[12];
+            _m01 = slotMatm[1];
+            _m05 = slotMatm[5];
+            _m13 = slotMatm[13];
 
             for (let vi = 0, vl = vertices.length; vi < vl;) {
                 _x = vertices[vi++]; 
@@ -200,7 +203,7 @@ let armatureAssembler = {
                 ibuf[_indexOffset++] = _vertexOffset + indices[ii];
             }
         }
-    },
+    }
 
     cacheTraverse (frame, parentMat) {
         if (!frame) return;
@@ -212,17 +215,21 @@ let armatureAssembler = {
         let offsetInfo;
         let vertices = frame.vertices;
         let indices = frame.indices;
-        let uintVert = frame.uintVert;
         
         let frameVFOffset = 0, frameIndexOffset = 0, segVFCount = 0;
         if (parentMat) {
-            _m00 = parentMat.m00;
-            _m04 = parentMat.m04;
-            _m12 = parentMat.m12;
-            _m01 = parentMat.m01;
-            _m05 = parentMat.m05;
-            _m13 = parentMat.m13;
+            let parentMatm = parentMat.m;
+            _m00 = parentMatm[0];
+            _m01 = parentMatm[1];
+            _m04 = parentMatm[4];
+            _m05 = parentMatm[5];
+            _m12 = parentMatm[12];
+            _m13 = parentMatm[13];
         }
+
+        let justTranslate = _m00 === 1 && _m01 === 0 && _m04 === 0 && _m05 === 1;
+        let needBatch = (_handleVal & NEED_BATCH);
+        let calcTranslate = needBatch && justTranslate;
 
         let colorOffset = 0;
         let colors = frame.colors;
@@ -256,31 +263,28 @@ let armatureAssembler = {
             }
 
             segVFCount = segInfo.vfCount;
-            switch (_handleVal) {
-                case NEED_COLOR:
-                case NEED_NONE:
-                    vbuf.set(vertices.subarray(frameVFOffset, frameVFOffset + segVFCount), _vfOffset);
-                    frameVFOffset += segVFCount;
-                break;
-                case NEED_BATCH:
-                case NEED_COLOR_BATCH:
-                    for (let ii = _vfOffset, il = _vfOffset + segVFCount; ii < il;) {
-                        _x = vertices[frameVFOffset++];
-                        _y = vertices[frameVFOffset++];
-                        vbuf[ii++] = _x * _m00 + _y * _m04 + _m12; // x
-                        vbuf[ii++] = _x * _m01 + _y * _m05 + _m13; // y
-                        vbuf[ii++] = vertices[frameVFOffset++]; // u
-                        vbuf[ii++] = vertices[frameVFOffset++]; // v
-                        uintbuf[ii++] = uintVert[frameVFOffset++];
-                    }
-                break;
+            vbuf.set(vertices.subarray(frameVFOffset, frameVFOffset + segVFCount), _vfOffset);
+            frameVFOffset += segVFCount;
+
+            if (calcTranslate) {
+                for (let ii = _vfOffset, il = _vfOffset + segVFCount; ii < il; ii += 5) {
+                    vbuf[ii] += _m12;
+                    vbuf[ii + 1] += _m13;
+                }
+            } else if (needBatch) {
+                for (let ii = _vfOffset, il = _vfOffset + segVFCount; ii < il; ii += 5) {
+                    _x = vbuf[ii];
+                    _y = vbuf[ii + 1];
+                    vbuf[ii] = _x * _m00 + _y * _m04 + _m12;
+                    vbuf[ii + 1] = _x * _m01 + _y * _m05 + _m13;
+                }
             }
 
             if ( !(_handleVal & NEED_COLOR) ) continue;
 
             // handle color
             let frameColorOffset = frameVFOffset - segVFCount;
-            for (let ii = _vfOffset + 4, il = _vfOffset + 4 + segVFCount; ii < il; ii+=5, frameColorOffset += 5) {
+            for (let ii = _vfOffset + 4, il = _vfOffset + 4 + segVFCount; ii < il; ii += 5, frameColorOffset += 5) {
                 if (frameColorOffset >= maxVFOffset) {
                     nowColor = colors[colorOffset++];
                     _handleColor(nowColor, 1.0);
@@ -289,11 +293,14 @@ let armatureAssembler = {
                 uintbuf[ii] = _c;
             }
         }
-    },
+    }
 
     fillBuffers (comp, renderer) {
         comp.node._renderFlag |= RenderFlow.FLAG_UPDATE_RENDER_DATA;
         
+        let armature = comp._armature;
+        if (!armature) return;
+
         // Init temp var.
         _mustFlush = true;
         _premultipliedAlpha = comp.premultipliedAlpha;
@@ -324,9 +331,6 @@ let armatureAssembler = {
             this.cacheTraverse(comp._curFrame, worldMat);
         } else {
             // Traverse all armature.
-            let armature = comp._armature;
-            if (!armature) return;
-
             this.realTimeTraverse(armature, worldMat, 1.0);
 
             let graphics = comp._debugDraw;
@@ -359,6 +363,6 @@ let armatureAssembler = {
         _renderer = undefined;
         _comp = undefined;
     }
-};
+}
 
-module.exports = Armature._assembler = armatureAssembler;
+Assembler.register(Armature, ArmatureAssembler);

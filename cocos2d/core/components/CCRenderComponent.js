@@ -23,81 +23,11 @@
  THE SOFTWARE.
  ****************************************************************************/
 
+import Assembler from '../renderer/assembler';
+
 const Component = require('./CCComponent');
-const renderEngine = require('../renderer/render-engine');
 const RenderFlow = require('../renderer/render-flow');
-const BlendFactor = require('../platform/CCMacro').BlendFactor;
-const RenderData = renderEngine.RenderData;
-const gfx = renderEngine.gfx;
-
-let BlendFactorPolyfill = cc.Class({
-    name: 'BlendFactorPolyfill',
-
-    properties: {
-        _srcBlendFactor: BlendFactor.SRC_ALPHA,
-        _dstBlendFactor: BlendFactor.ONE_MINUS_SRC_ALPHA,
-
-          /**
-         * !#en specify the source Blend Factor, this will generate a custom material object, please pay attention to the memory cost.
-         * !#zh 指定原图的混合模式，这会克隆一个新的材质对象，注意这带来的开销
-         * @property srcBlendFactor
-         * @type {macro.BlendFactor}
-         * @example
-         * sprite.srcBlendFactor = cc.macro.BlendFactor.ONE;
-         */
-        srcBlendFactor: {
-            get: function() {
-                return this._srcBlendFactor;
-            },
-            set: function(value) {
-                if (this._srcBlendFactor === value) return;
-                this._srcBlendFactor = value;
-                this._updateBlendFunc(true);
-            },
-            animatable: false,
-            type:BlendFactor,
-            tooltip: CC_DEV && 'i18n:COMPONENT.sprite.src_blend_factor'
-        },
-
-        /**
-         * !#en specify the destination Blend Factor.
-         * !#zh 指定目标的混合模式
-         * @property dstBlendFactor
-         * @type {macro.BlendFactor}
-         * @example
-         * sprite.dstBlendFactor = cc.macro.BlendFactor.ONE;
-         */
-        dstBlendFactor: {
-            get: function() {
-                return this._dstBlendFactor;
-            },
-            set: function(value) {
-                if (this._dstBlendFactor === value) return;
-                this._dstBlendFactor = value;
-                this._updateBlendFunc(true);
-            },
-            animatable: false,
-            type: BlendFactor,
-            tooltip: CC_DEV && 'i18n:COMPONENT.sprite.dst_blend_factor'
-        },
-    },
-
-    _updateBlendFunc: function (updateHash) {
-        let material = this.getMaterial();
-        if (material) {
-            var pass = material._mainTech.passes[0];
-            pass.setBlend(
-                gfx.BLEND_FUNC_ADD,
-                this._srcBlendFactor, this._dstBlendFactor,
-                gfx.BLEND_FUNC_ADD,
-                this._srcBlendFactor, this._dstBlendFactor
-            );
-            if (updateHash) {
-                material.updateHash();
-            }
-        }
-    },
-})
+const Material = require('../assets/material/CCMaterial');
 
 /**
  * !#en
@@ -118,16 +48,45 @@ let RenderComponent = cc.Class({
     },
 
     properties: {
+        _materials: {
+            default: [],
+            type: Material,
+        },
+
+        /**
+         * !#en The materials used by this render component.
+         * !#zh 渲染组件使用的材质。
+         * @property {[Material]} sharedMaterials
+         */
+        sharedMaterials: {
+            get () {
+                return this._materials;
+            },
+            set (val) {
+                this._materials = val;
+                this._activateMaterial(true);
+            },
+            type: [Material],
+            displayName: 'Materials',
+            animatable: false
+        }
     },
     
     ctor () {
+        this._vertsDirty = true;
         this._material = null;
-        this._renderData = null;
-        this.__allocedDatas = [];
-        this._vertexFormat = null;
-        this._toPostHandle = false;
-        this._assembler = this.constructor._assembler;
-        this._postAssembler = this.constructor._postAssembler;
+        this._assembler = null;
+    },
+
+    _resetAssembler () {
+        this.setVertsDirty(true);
+        Assembler.init(this);
+
+        this._updateColor();
+    },
+
+    __preload () {
+        this._resetAssembler();
     },
 
     onEnable () {
@@ -135,21 +94,39 @@ let RenderComponent = cc.Class({
             this.node._renderComponent.enabled = false;
         }
         this.node._renderComponent = this;
-        this.node._renderFlag |= RenderFlow.FLAG_RENDER | RenderFlow.FLAG_UPDATE_RENDER_DATA | RenderFlow.FLAG_COLOR;
+
+        this.node.on(cc.Node.EventType.SIZE_CHANGED, this._onNodeSizeDirty, this);
+        this.node.on(cc.Node.EventType.ANCHOR_CHANGED, this._onNodeSizeDirty, this);
+
+        this.node._renderFlag |= RenderFlow.FLAG_RENDER | RenderFlow.FLAG_UPDATE_RENDER_DATA | RenderFlow.FLAG_OPACITY_COLOR;
     },
 
     onDisable () {
         this.node._renderComponent = null;
+        this.node.off(cc.Node.EventType.SIZE_CHANGED, this._onNodeSizeDirty, this);
+        this.node.off(cc.Node.EventType.ANCHOR_CHANGED, this._onNodeSizeDirty, this);
         this.disableRender();
     },
 
     onDestroy () {
-        for (let i = 0, l = this.__allocedDatas.length; i < l; i++) {
-            RenderData.free(this.__allocedDatas[i]);
+        this._materials.length = 0;
+
+        if (CC_JSB && CC_NATIVERENDERER) {
+            this._assembler && this._assembler.destroy && this._assembler.destroy();
         }
-        this.__allocedDatas.length = 0;
-        this._material = null;
-        this._renderData = null;
+    },
+
+    setVertsDirty () {
+        this._vertsDirty = true;
+        this.markForUpdateRenderData(true);
+    },
+
+    _onNodeSizeDirty () {
+        this.setVertsDirty();
+    },
+
+    _on3DNodeChanged () {
+        this.setVertsDirty();
     },
     
     _canRender () {
@@ -175,58 +152,67 @@ let RenderComponent = cc.Class({
         }
     },
 
-    markForCustomIARender (enable) {
-        if (enable && this._canRender()) {
-            this.node._renderFlag |= RenderFlow.FLAG_CUSTOM_IA_RENDER;
-        }
-        else if (!enable) {
-            this.node._renderFlag &= ~RenderFlow.FLAG_CUSTOM_IA_RENDER;
-        }
-    },
-
     disableRender () {
-        this.node._renderFlag &= ~(RenderFlow.FLAG_RENDER | RenderFlow.FLAG_CUSTOM_IA_RENDER | RenderFlow.FLAG_UPDATE_RENDER_DATA | RenderFlow.FLAG_COLOR);
+        this.node._renderFlag &= ~(RenderFlow.FLAG_RENDER | RenderFlow.FLAG_UPDATE_RENDER_DATA);
     },
 
-    requestRenderData () {
-        let data = RenderData.alloc();
-        this.__allocedDatas.push(data);
-        return data;
-    },
-
-    destroyRenderData (data) {
-        let index = this.__allocedDatas.indexOf(data);
-        if (index !== -1) {
-            this.__allocedDatas.splice(index, 1);
-            RenderData.free(data);
+    /**
+     * !#en Get the material by index.
+     * !#zh 根据指定索引获取材质
+     * @method getMaterial
+     * @param {Number} index 
+     * @return {Material}
+     */
+    getMaterial (index) {
+        if (index < 0 || index >= this._materials.length) {
+            return null;
         }
+
+        let material = this._materials[index];
+        if (!material) return null;
+        
+        let instantiated = Material.getInstantiatedMaterial(material, this);
+        if (instantiated !== material) {
+            this.setMaterial(index, instantiated);
+        }
+
+        return this._materials[index];
+    },
+    
+    /**
+     * !#en Set the material by index.
+     * !#zh 根据指定索引设置材质
+     * @method setMaterial
+     * @param {Number} index 
+     * @param {Material} material 
+     */
+    setMaterial (index, material) {
+        this._materials[index] = material;
+        if (material) {
+            this.markForUpdateRenderData(true);
+        }
+    },
+
+    _activateMaterial (force) {
     },
 
     _updateColor () {
-        let material = this._material;
-        if (material) {
-            // For batch rendering, update the color only when useColor is set to true.
-            if (material.useColor) {
-                material.color = this.node.color;
-                material.updateHash();
-            }
-
-            // reset flag when set color to material successfully
-            this.node._renderFlag &= ~RenderFlow.FLAG_COLOR;
+        if (this._assembler.updateColor) {
+            this._assembler.updateColor(this);
         }
     },
 
-    getMaterial () {
-        return this._material;
-    },
-
-    _updateMaterial (material) {
-        this._material = material;
-        material.updateHash();
-    },
+    _checkBacth (renderer, cullingMask) {
+        let material = this.sharedMaterials[0];
+        if ((material && material.getHash() !== renderer.material.getHash()) || 
+            renderer.cullingMask !== cullingMask) {
+            renderer._flush();
+    
+            renderer.node = material.getDefine('CC_USE_MODEL') ? this.node : renderer._dummyNode;
+            renderer.material = material;
+            renderer.cullingMask = cullingMask;
+        }
+    }
 });
-RenderComponent._assembler = null;
-RenderComponent._postAssembler = null;
-RenderComponent.BlendFactorPolyfill = BlendFactorPolyfill;
 
 cc.RenderComponent = module.exports = RenderComponent;

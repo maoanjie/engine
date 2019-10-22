@@ -36,14 +36,17 @@ let _audioPool = [];
 
 let recycleAudio = function (audio) {
     audio._finishCallback = null;
-    if (_audioPool.length < 32) {
-        audio.off('ended');
-        audio.off('stop');
-        audio.src = null;
-        _audioPool.push(audio);
-    }
-    else {
-        audio.destroy();
+    audio.off('ended');
+    audio.off('stop');
+    audio.src = null;
+    // In case repeatly recycle audio
+    if (!_audioPool.includes(audio)) {
+        if (_audioPool.length < 32) {
+            _audioPool.push(audio);
+        }
+        else {
+            audio.destroy();
+        }
     }
 };
 

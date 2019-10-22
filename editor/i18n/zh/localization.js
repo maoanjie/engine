@@ -90,6 +90,21 @@ module.exports = {
             'fit_height': '自动缩放 Canvas 使设计分辨率的高度充满设备屏幕的高度',
             'fit_width': '自动缩放 Canvas 使设计分辨率的宽度充满设备屏幕的宽度'
         },
+        'camera': {
+            'zoomRatio': '摄像机缩放比率',
+            'fov': '决定摄像机视角的宽度，当摄像机处于透视投影模式下这个属性才会生效',
+            'orthoSize': '摄像机在正交投影模式下的视窗大小',
+            'nearClip': '摄像机的近剪裁面',
+            'farClip': '摄像机的远剪裁面',
+            'ortho': '设置摄像机的投影模式是正交还是透视模式',
+            'rect': '决定摄像机绘制在屏幕上哪个位置，值为（0 ~ 1）',
+            'cullingMask': '决定摄像机会渲染场景的哪一部分',
+            'clearFlags': '决定摄像机渲染时会清除哪些状态 \n - Color：清除背景颜色 \n - Depth：清除深度缓冲区 \n - Stencil：清除模板缓冲区',
+            'backgroundColor': '摄像机用于清除屏幕的背景色',
+            'depth': '摄像机深度，用于决定摄像机的渲染顺序',
+            'targetTexture': '摄像机渲染的目标 RenderTexture \n 一般摄像机会直接渲染到屏幕上，但是有一些效果可以使用摄像机渲染到 RenderTexture 上再对 RenderTexture 进行处理来实现',
+            'renderStages': '设置摄像机渲染的阶段',
+        },
         'label': {
             'string': 'Label 显示的文本内容字符串',
             'horizontal_align': '文字水平对齐模式',
@@ -104,6 +119,15 @@ module.exports = {
             'cacheMode': '文本缓存模式，包括以下三种：\n 1. NONE : 不做任何缓存，文本内容进行一次绘制 \n 2. BITMAP: 将文本作为静态图像加入动态图集进行批次合并，但是不能频繁动态修改文本内容 \n 3. CHAR: 将文本拆分为字符并且把字符纹理缓存到一张字符图集中进行复用，适用于字符内容重复并且频繁更新的文本内容',
             'actualFontSize': 'SHRINK 模式下面文本实际渲染的字体大小',
             'spacingX': '文字之间 x 轴的间距',
+        },
+        "outline": {
+            "color": "描边的颜色",
+            "width": "描边的宽度",
+        },
+        "shadow": {
+            "color": "阴影的颜色",
+            "offset": "字体与阴影的偏移",
+            "blur": "阴影的模糊程度"
         },
         'progress': {
             'bar_sprite': '进度条显示用的 Sprite 节点，可以动态改变尺寸',
@@ -217,19 +241,15 @@ module.exports = {
         },
         'editbox': {
             "string": "输入框的初始输入内容，如果为空则会显示占位符的文本",
-            "backgroundImage": "输入框的背景图片",
+            "background": "输入框背景节点上挂载的 Sprite 组件对象",
             "input_flag": "指定输入标识：可以指定输入方式为密码或者单词首字母大写",
             "returnType": "指定移动设备上面回车按钮的样式",
             "input_mode": "指定输入模式: ANY表示多行输入，其它都是单行输入，移动平台上还可以指定键盘样式。",
-            "font_size": "输入框文本的字体大小",
-            "line_height": "输入框文本的行高",
-            "font_color": "输入框文本的颜色",
-            "stay_on_top": "设置为 True 则输入框总是可见，并且永远在游戏视图的上面，该属性会在 v2.1 中移除",
             "tab_index": "修改 DOM 输入元素的 tabIndex，这个属性只有在 Web 上面修改有意义。",
             "placeholder": "输入框占位符的文本内容",
-            "placeholder_font_size": "输入框占位符的字体大小",
-            "placeholder_font_color": "输入框占位符的字体颜色",
             "max_length": "输入框最大允许输入的字符个数",
+            "textLabel": "输入框输入文本节点上挂载的 Label 组件对象",
+            "placeholderLabel": "输入框占位符节点上挂载的 Label 组件对象"
         },
         "videoplayer": {
             "resourceType": "视频来源，支持本地视频 URL 和远程视频 URL",
@@ -264,6 +284,7 @@ module.exports = {
             "time_scale": "当前骨骼中所有动画的时间缩放率",
             "debug_slots": "是否显示 slot 的 debug 信息",
             "debug_bones": "是否显示 bone 的 debug 信息",
+            "debug_mesh": "是否显示 mesh 的 debug 信息",
             "premultipliedAlpha": "是否启用贴图预乘",
             "use_tint": "是否启用染色效果",
             "enabled_batch": "是否开启合批",
@@ -404,10 +425,13 @@ module.exports = {
             'layer': '指定 TiledTile 属于哪一个 TiledLayer'
         },
         'wx_subcontext_view': {
-            'fps': '开放数据域的 FPS, 该属性会覆盖开放域的帧率设置'
+            'fps': '开放数据域的 FPS, 该属性会覆盖开放域的帧率设置',
         },
         'swan_subcontext_view': {
-            'fps': '开放数据域的 FPS, 该属性会覆盖开放域的帧率设置'
-        }
+            'fps': '开放数据域的 FPS, 该属性会覆盖开放域的帧率设置',
+        },
+        'skeleton_animation': {
+            'search_animation_clips': '搜索骨骼动画',
+        },
     }
 };

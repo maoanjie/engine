@@ -118,11 +118,11 @@ exports.test = function (callback) {
     try {
         qunit = require('gulp-qunit');
     } catch (e) {
-        console.error('Please run "npm install gulp-qunit" before running "gulp test".');
+        console.error('Please run "npm install gulp-qunit@2.0.1 -g" before running "gulp test".');
         throw e;
     }
     return Gulp.src('bin/qunit-runner.html')
-        .pipe(qunit({ timeout: 5 }))
+        .pipe(qunit({ timeout: 10 }))
         .on('end', callback);
 };
 

@@ -42,7 +42,7 @@ cc.js.mixin(Atlas.prototype, {
                 this._y = this._nexty;
             }
 
-            if ((this._y + height) > this._nexty) {
+            if ((this._y + height + space) > this._nexty) {
                 this._nexty = this._y + height + space;
             }
 
@@ -51,10 +51,13 @@ cc.js.mixin(Atlas.prototype, {
             }
 
             // texture bleeding
-            this._texture.drawTextureAt(texture, this._x-1, this._y);
-            this._texture.drawTextureAt(texture, this._x+1, this._y);
-            this._texture.drawTextureAt(texture, this._x, this._y-1);
-            this._texture.drawTextureAt(texture, this._x, this._y+1);
+            if (cc.dynamicAtlasManager.textureBleeding) {
+                this._texture.drawTextureAt(texture, this._x-1, this._y);
+                this._texture.drawTextureAt(texture, this._x+1, this._y);
+                this._texture.drawTextureAt(texture, this._x, this._y-1);
+                this._texture.drawTextureAt(texture, this._x, this._y+1);
+            }
+
             this._texture.drawTextureAt(texture, this._x, this._y);
 
             this._innerTextureInfos[texture._id] = {
@@ -86,6 +89,12 @@ cc.js.mixin(Atlas.prototype, {
         if (!this._dirty) return;
         this._texture.update();
         this._dirty = false;
+    },
+
+    deleteInnerTexture (texture) {
+        if (texture) {
+            delete this._innerTextureInfos[texture._id];
+        }
     },
 
     reset () {

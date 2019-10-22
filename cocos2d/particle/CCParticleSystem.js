@@ -31,9 +31,10 @@ const codec = require('../compression/ZipUtils');
 const PNGReader = require('./CCPNGReader');
 const tiffReader = require('./CCTIFFReader');
 const textureUtil = require('../core/utils/texture-util');
-const renderEngine = require('../core/renderer/render-engine');
 const RenderFlow = require('../core/renderer/render-flow');
 const ParticleSimulator = require('./particle-simulator');
+const Material = require('../core/assets/material/CCMaterial');
+const BlendFunc = require('../core/utils/blend-func');
 
 function getImageFormatByData (imgData) {
     // if it is a png file buffer.
@@ -56,6 +57,16 @@ function getImageFormatByData (imgData) {
     }
     return macro.ImageFormat.UNKNOWN;
 }
+
+//
+function getParticleComponents (node) {
+    let parent = node.parent, comp = node.getComponent(cc.ParticleSystem);
+    if (!parent || !comp) {
+        return node.getComponentsInChildren(cc.ParticleSystem);
+    }
+    return getParticleComponents(parent);
+}
+
 
 /**
  * !#en Enum for emitter modes
@@ -541,9 +552,23 @@ var properties = {
      * @property {ParticleSystem.PositionType} positionType
      * @default ParticleSystem.PositionType.FREE
      */
-    positionType: {
+    _positionType: {
         default: PositionType.FREE,
-        type: PositionType
+        formerlySerializedAs: "positionType"
+    },
+
+    positionType: {
+        type: PositionType,
+        get () {
+            return this._positionType;
+        },
+        set (val) {
+            let material = this.getMaterial(0);
+            if (material) {
+                material.define('CC_USE_MODEL', val !== PositionType.FREE);
+            }
+            this._positionType = val;
+        }
     },
 
     /**
@@ -710,7 +735,7 @@ var properties = {
 var ParticleSystem = cc.Class({
     name: 'cc.ParticleSystem',
     extends: RenderComponent,
-    mixins: [RenderComponent.BlendFactorPolyfill],
+    mixins: [BlendFunc],
     editor: CC_EDITOR && {
         menu: 'i18n:MAIN_MENU.component.renderers/ParticleSystem',
         inspector: 'packages://inspector/inspectors/comps/particle-system.js',
@@ -718,11 +743,16 @@ var ParticleSystem = cc.Class({
         executeInEditMode: true
     },
 
-    ctor: function () {
+    ctor () {
+        this.initProperties();
+    },
+
+    initProperties () {
         this._previewTimer = null;
         this._focused = false;
 
         this._simulator = new ParticleSimulator(this);
+        this._texture = null;
 
         // colors
         this._startColor = cc.color(255, 255, 255, 255);
@@ -780,13 +810,27 @@ var ParticleSystem = cc.Class({
 
     onFocusInEditor: CC_EDITOR && function () {
         this._focused = true;
-        if (this.preview) {
-            this.resetSystem();
+        let components = getParticleComponents(this.node);
+        for (let i = 0; i < components.length; ++i) {
+            components[i]._startPreview();
         }
     },
 
     onLostFocusInEditor: CC_EDITOR && function () {
         this._focused = false;
+        let components = getParticleComponents(this.node);
+        for (let i = 0; i < components.length; ++i) {
+            components[i]._stopPreview();
+        }
+    },
+
+    _startPreview: CC_EDITOR && function () {
+        if (this.preview) {
+            this.resetSystem();
+        }
+    },
+
+    _stopPreview: CC_EDITOR && function () {
         if (this.preview) {
             this.resetSystem();
             this.stopSystem();
@@ -832,7 +876,8 @@ var ParticleSystem = cc.Class({
         });
     },
 
-    __preload: function () {
+    __preload () {
+        this._super();
 
         if (CC_EDITOR) {
             this._convertTextureToSpriteFrame();
@@ -869,7 +914,6 @@ var ParticleSystem = cc.Class({
 
     onEnable () {
         this._super();
-        this.node._renderFlag &= ~RenderFlow.FLAG_RENDER;
         this._activateMaterial();
     },
 
@@ -881,14 +925,13 @@ var ParticleSystem = cc.Class({
             this._buffer.destroy();
             this._buffer = null;
         }
-        this._ia = null;
         // reset uv data so next time simulator will refill buffer uv info when exit edit mode from prefab.
         this._simulator._uvFilled = 0;
         this._super();
     },
     
     lateUpdate (dt) {
-        if (!this._simulator.finished && this._material) {
+        if (!this._simulator.finished) {
             this._simulator.step(dt);
         }
     },
@@ -1104,6 +1147,8 @@ var ParticleSystem = cc.Class({
         this.endSizeVar = parseFloat(dict["finishParticleSizeVariance"] || 0);
 
         // position
+        // Make empty positionType value and old version compatible
+        this.positionType = parseFloat(dict['positionType'] || PositionType.RELATIVE);
         // for 
         this.sourcePos.x = 0;
         this.sourcePos.y = 0;
@@ -1190,36 +1235,32 @@ var ParticleSystem = cc.Class({
         }
     },
 
-    _updateMaterial (material) {
-        this._material = material;
-        this._updateBlendFunc();
-        material.updateHash();
-    },
-
     _activateMaterial: function () {
-        if (!this._material) {
-            this._material = new renderEngine.SpriteMaterial();
-            this._material.useTexture = true;
-            this._material.useModel = true;
-            this._material.useColor = false;
-        }
-
-        if (!this._ia) {
-            ParticleSystem._assembler.createIA(this);
-        }
-
         if (!this._texture || !this._texture.loaded) {
-            this.markForCustomIARender(false);
+            this.markForUpdateRenderData(false);
+            this.markForRender(false);
+
             if (this._renderSpriteFrame) {
                 this._applySpriteFrame();
             }
+
+            return;
+        }
+
+        let material = this.sharedMaterials[0];
+        if (!material) {
+            material = Material.getInstantiatedBuiltinMaterial('2d-sprite', this);
         }
         else {
-            this.markForUpdateRenderData(true);
-            this.markForCustomIARender(true);
-            this._material.texture = this._texture;
-            this._updateMaterial(this._material);
+            material = Material.getInstantiatedMaterial(material, this);
         }
+
+        // In case the plist lost positionType
+        material.define('CC_USE_MODEL', this._positionType !== PositionType.FREE);
+        material.setProperty('texture', this._texture);
+
+        this.setMaterial(0, material);
+        this.markForRender(true);
     },
     
     _finishedSimulation: function () {

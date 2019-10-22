@@ -24,10 +24,11 @@
  THE SOFTWARE.
  ****************************************************************************/
 
+import { vec2 } from '../vmath';
+
 const ValueType = require('./value-type');
 const js = require('../platform/js');
 const CCClass = require('../platform/CCClass');
-const math = require('../renderer/render-engine').math;
 const misc = require('../utils/misc');
 
 /**
@@ -68,6 +69,8 @@ CCClass.fastDefine('cc.Vec2', Vec2, { x: 0, y: 0 });
 
 var proto = Vec2.prototype;
 
+// compatible with vec3
+js.value(proto, 'z', 0, true);
 
 /**
  * !#en clone a Vec2 object
@@ -329,7 +332,7 @@ proto.scale = function (vector, out) {
  * !#en Divides by a number. If you want to save result to another vector, use div() instead.
  * !#zh 向量除法。如果你想结果保存到另一个向量，可使用 div() 代替。
  * @method divSelf
- * @param {number} divisor
+ * @param {number} num
  * @return {Vec2} returns this
  * @chainable
  * @example
@@ -346,7 +349,7 @@ proto.divSelf = function (num) {
  * !#en Divides by a number, and returns the new result.
  * !#zh 向量除法，并返回新的结果。
  * @method div
- * @param {Vec2} divisor
+ * @param {number} num
  * @param {Vec2} [out] - optional, the receiving vector, you can pass the same vec2 to save result to itself, if not provided, a new vec2 will be created
  * @return {Vec2} the result
  * @example
@@ -583,13 +586,39 @@ proto.project = function (vector) {
 /**
  * Transforms the vec2 with a mat4. 3rd vector component is implicitly '0', 4th vector component is implicitly '1'
  * @method transformMat4
- * @param {mat4} m matrix to transform with
+ * @param {Mat4} m matrix to transform with
  * @param {Vec2} [out] the receiving vector, you can pass the same vec2 to save result to itself, if not provided, a new vec2 will be created
  * @returns {Vec2} out
  */
 proto.transformMat4 = function (m, out) {
     out = out || new Vec2();
-    math.vec2.transformMat4(out, this, m);
+    vec2.transformMat4(out, this, m);
+};
+
+proto.fromTranslation = function (trs) {
+    this.x = trs[0];
+    this.y = trs[1];
+    return this;
+};
+
+proto.toTranslation = function (trs) {
+    trs[0] = this.x;
+    trs[1] = this.y;
+};
+
+proto.fromScale = function (trs) {
+    this.x = trs[7];
+    this.y = trs[8];
+    return this;
+};
+
+proto.toScale = function (trs) {
+    trs[7] = this.x;
+    trs[8] = this.y;
+};
+
+proto.array = function (out) {
+    vec2.array(out, this);
 };
 
 //_serialize: function () {

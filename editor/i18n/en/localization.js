@@ -45,19 +45,19 @@ module.exports = {
             "sprite_frame": "SpriteFrame image to use",
             "atlas": "Atlas that the image belongs to",
             "type": "Rendering Mode: Simple, Sliced, Tiled or Filled",
-            "original_size": "Use the Images original size as the Node size?",
+            "original_size": "Use the Image's original size as the Node size?",
             "edit_button": "Edit",
             "select_button": "Select In Atlas",
             "select_tooltip": "Choose Atlas",
             "edit_tooltip": "Open Sprite Editor, set squares and other data",
             'fill_type': 'The direction of filling, choose from Horizontal, Vertical and Radial',
             'fill_center': 'For radial filling, set the center of the circle, value range is 0 to 1',
-            'fill_start': 'The normalized value indicate where to start filling',
-            'fill_range': 'The normalizad value indicate how much of the sprite we want to show',
+            'fill_start': 'The normalized value indicates where to start filling',
+            'fill_range': 'The normalizad value indicates how much of the sprite we want to show',
             'src_blend_factor': 'The source image blend mode',
             'dst_blend_factor': 'The destination image blend mode',
-            'size_mode': 'Set the size of the node which Sprite component is on. CUSTOM for setting width and height manually;TRIMMED to use image size with transparent pixels trimmed; RAW to use image size without trimming.',
-            'trim': 'Whether to render transparent pixels around image in node\'s bounding box. If you check this option the boudning box will not include transparent pixels around the image.'
+            'size_mode': 'Set the size of the node on which the Sprite component is on. CUSTOM for setting width and height manually;TRIMMED to use image size with transparent pixels trimmed; RAW to use image size without trimming.',
+            'trim': 'Whether to render transparent pixels around image in node\'s bounding box. If you check this option the bounding box will not include transparent pixels around the image.'
         },
         "button": {
             "click_event": {
@@ -87,6 +87,21 @@ module.exports = {
             "fit_height": "Canvas allows designers to automatically scale the resolution  to the full height of devices screen",
             "fit_width": "Canvas allows designers to automatically scale the resolution  to the full width of devices screen"
         },
+        "camera": {
+            'zoomRatio': 'The camera zoom ratio.',
+            'fov': 'Field of view. The width of the Camera’s view angle, measured in degrees along the local Y axis.',
+            'orthoSize': 'The viewport size of the Camera when set to orthographic projection.',
+            'nearClip': 'The near clipping plane.',
+            'farClip': 'The far clipping plane.',
+            'ortho': 'Is the camera orthographic (true) or perspective (false)?',
+            'rect': 'Four values (0 ~ 1) that indicate where on the screen this camera view will be drawn.',
+            'cullingMask': 'This is used to render parts of the scene selectively.',
+            'clearFlags': 'Determining what to clear when camera rendering. \n - Color：Clear the background color. \n - Depth：Clear the depth buffer. \n - STENCIL：Clear the stencil.',
+            'backgroundColor': 'The color with which the screen will be cleared.',
+            'depth': 'Camera\'s depth in the camera rendering order.',
+            'targetTexture': 'Destination render texture. \n Usually cameras render directly to screen, but for some effects it is useful to make a camera render into a texture.',
+            'renderStages': 'Sets the camera\'s render stages.',
+        },
         "label": {
             "string": "Text of the Label",
             "horizontal_align": "Horizontal alignment",
@@ -101,6 +116,15 @@ module.exports = {
             'cacheMode': 'The text cache mode includes the following three types: \n 1. NONE : Do not do any caching, text content is drawn once. \n 2. BITMAP: Add text as a static image to the dynamic atlas for batch merging, but not frequently dynamically Text content \n 3. CHAR: Splits text into characters and caches characters into character atlas, suitable for text content with repeated and frequently updated character content',
             'actualFontSize': 'The actual rendering font size in shrink mode',
             'spacingX': 'The spacing of the x axis between characters',
+        },
+        "outline": {
+            "color": "The outline color",
+            "width": "The outline width",
+        },
+        "shadow": {
+            "color": "The shadow color",
+            "offset": "Offset between font and shadow",
+            "blur": "A non-negative float specifying the level of shadow blur"
         },
         "progress": {
             "bar_sprite": "A progress bar is displayed with the Sprite node that can dynamically change the size",
@@ -213,19 +237,15 @@ module.exports = {
         },
         "editbox": {
             "string": "The initial input text of EditBox.",
-            "backgroundImage": "The background image of EditBox.",
+            "background": "The Sprite component attached to the node for EditBox's background.",
             "returnType": "The keyboard return type of EditBox. This is useful for keyboard of mobile device.",
             "input_flag": "Specify the input flag: password or capitalize word. ",
             "input_mode": "Specify the input mode: multiline or single line.",
-            "font_size": "The font size of input label.",
-            "line_height": "The line height of input label.",
-            "stay_on_top": "Set to true and the input is always visible and be on top of the game view, this property will be removed on v2.1",
             "tab_index": "Set the tabIndex of the DOM input element, only useful on Web.",
-            "font_color": "The font color of input label.",
             "placeholder": "The content string of placeholder.",
-            "placeholder_font_size": "The font size of placeholder label.",
-            "placeholder_font_color": "The font color of placeholder label.",
-            "max_length": "The maximize input characters."
+            "max_length": "The maximize input characters.",
+            "textLabel": "The Label component attached to the node for EditBox's input text label.",
+            "placeholderLabel": "The Label component attached to the node for EditBox's placeholder text label."
         },
         "videoplayer": {
             "resourceType": "The resource type of VideoPlayer, currently support remote URL and local videos.",
@@ -260,6 +280,7 @@ module.exports = {
             "time_scale": "The time scale of animations of this skeleton",
             "debug_slots": "Indicates whether show debug slots.",
             "debug_bones": "Indicates whether show debug bones.",
+            "debug_mesh": "Indicates whether show debug mesh.",
             "premultipliedAlpha": "Indicates whether to enable premultiplied alpha.",
             "use_tint": "Indicates whether to use tint effect.",
             "enabled_batch": "Indicates whether enabled batch model",
@@ -400,10 +421,13 @@ module.exports = {
             'layer': 'Specify which TiledLayer the TiledTile belong to.'
         },
         'wx_subcontext_view': {
-            'interval': 'The FPS of open data context, this property will overwrite the frame rate setting in open data context'
+            'interval': 'The FPS of open data context, this property will overwrite the frame rate setting in open data context',
         },
         'swan_subcontext_view': {
-            'interval': 'The FPS of open data context, this property will overwrite the frame rate setting in open data context'
-        }
+            'interval': 'The FPS of open data context, this property will overwrite the frame rate setting in open data context',
+        },
+        'skeleton_animation': {
+            'search_animation_clips': 'Search Animation Clips',
+        },
     }
 };

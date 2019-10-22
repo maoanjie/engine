@@ -70,7 +70,7 @@ let SpriteFrame = cc.Class(/** @lends cc.SpriteFrame# */{
         _textureSetter: {
             set: function (texture) {
                 if (texture) {
-                    if (CC_EDITOR && !(texture instanceof cc.Texture2D)) {
+                    if (CC_EDITOR && Editor.isBuilder) {
                         // just building
                         this._texture = texture;
                         return;
@@ -327,15 +327,6 @@ let SpriteFrame = cc.Class(/** @lends cc.SpriteFrame# */{
         }
         let w = texture.width, h = texture.height;
 
-        if (self._rotated && cc.game.renderType === cc.game.RENDER_TYPE_CANVAS) {
-            // TODO: rotate texture for canvas
-            // self._texture = _ccsg.Sprite.CanvasRenderCmd._createRotatedTexture(texture, self.getRect());
-            self._rotated = false;
-            w = self._texture.width;
-            h = self._texture.height;
-            self._rect = cc.rect(0, 0, w, h);
-        }
-
         if (self._rect) {
             self._checkRect(self._texture);
         }
@@ -495,17 +486,9 @@ let SpriteFrame = cc.Class(/** @lends cc.SpriteFrame# */{
      * If you do not need to use the SpriteFrame temporarily, you can call this method so that its texture could be garbage collected. Then when you need to render the SpriteFrame, you should call `ensureLoadTexture` manually to reload texture.
      * !#zh
      * 当你暂时不再使用这个 SpriteFrame 时，可以调用这个方法来保证引用的贴图对象能被 GC。然后当你要渲染 SpriteFrame 时，你需要手动调用 `ensureLoadTexture` 来重新加载贴图。
-     *
      * @method clearTexture
-     * @example
-     * spriteFrame.clearTexture();
-     * // when you need the SpriteFrame again...
-     * spriteFrame.once('load', onSpriteFrameLoaded);
-     * spriteFrame.ensureLoadTexture();
+     * @deprecated since 2.1
      */
-    clearTexture: function () {
-        this._texture = null;   // TODO - release texture
-    },
 
     _checkRect: function (texture) {
         let rect = this._rect;

@@ -23,12 +23,18 @@
  THE SOFTWARE.
  ****************************************************************************/
 
-const Label = require('../../../../components/CCLabel');
-const ttfAssembler = require('./ttf');
-const bmfontAssembler = require('./bmfont');
-const letterAssembler = require('./letter-font')
+import Assembler from '../../../assembler';
+import Label from '../../../../components/CCLabel';
 
-let canvasPool = {
+import TTF from './2d/ttf';
+import Bmfont from './2d/bmfont';
+import Letter from './2d/letter';
+
+import TTF3D from './3d/ttf';
+import Bmfont3D from './3d/bmfont';
+import Letter3D from './3d/letter';
+
+Label._canvasPool = {
     pool: [],
     get () {
         let data = this.pool.pop();
@@ -52,29 +58,29 @@ let canvasPool = {
     }
 };
 
-var labelAssembler = {
-    getAssembler (comp) {
-        let assembler = ttfAssembler;
+Assembler.register(cc.Label, {
+    getConstructor(label) {
+        let is3DNode = label.node.is3DNode;
+        let ctor = is3DNode ? TTF3D : TTF;
         
-        if (comp.font instanceof cc.BitmapFont) {
-            assembler = bmfontAssembler;
-        } else if (comp.cacheMode === Label.CacheMode.CHAR) {
+        if (label.font instanceof cc.BitmapFont) {
+            ctor = is3DNode ? Bmfont3D : Bmfont;
+        } else if (label.cacheMode === Label.CacheMode.CHAR) {
             if (cc.sys.browserType === cc.sys.BROWSER_TYPE_WECHAT_GAME_SUB) {
                 cc.warn('sorry, subdomain does not support CHAR mode currently!');
             } else {
-                assembler = letterAssembler;
+                ctor = is3DNode ? Letter3D : Letter;
             }  
         }
 
-        return assembler;
+        return ctor;
     },
 
-    // Skip invalid labels (without own _assembler)
-    updateRenderData (label) {
-        return label.__allocedDatas;
-    }
-};
+    TTF,
+    Bmfont,
+    Letter,
 
-Label._assembler = labelAssembler;
-Label._canvasPool = canvasPool;
-module.exports = labelAssembler;
+    TTF3D,
+    Bmfont3D,
+    Letter3D
+});

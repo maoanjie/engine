@@ -27,6 +27,7 @@
 var Asset = require('../assets/CCAsset');
 var callInNextTick = require('./utils').callInNextTick;
 var Loader = require('../load-pipeline/CCLoader');
+var AssetTable = require('../load-pipeline/asset-table');
 var PackDownloader = require('../load-pipeline/pack-downloader');
 var AutoReleaseUtils = require('../load-pipeline/auto-release-utils');
 var decodeUuid = require('../utils/decode-uuid');
@@ -92,7 +93,8 @@ var AssetLibrary = {
         }
         Loader.load(item, function (error, asset) {
             if (error || !asset) {
-                error = new Error('[AssetLibrary] loading JSON or dependencies failed: ' + (error ? error.message : 'Unknown error'));
+                let errorInfo = typeof error === 'string' ? error : (error ? (error.message || error.errorMessage || JSON.stringify(error)) : 'Unknown error');
+                error = new Error('[AssetLibrary] loading JSON or dependencies failed:' + errorInfo);
             }
             else {
                 if (asset.constructor === cc.SceneAsset) {
@@ -142,7 +144,7 @@ var AssetLibrary = {
                     error.errorCode = 'db.NOTFOUND';
                     callback(error);
                 }
-            });
+            }, -1);
         }
     },
 
@@ -316,8 +318,11 @@ var AssetLibrary = {
 
         // init raw assets
 
-        var resources = Loader._resources;
-        resources.reset();
+        var assetTables = Loader._assetTables;
+        for (var mount in assetTables) {
+            assetTables[mount].reset();
+        }
+        
         var rawAssets = options.rawAssets;
         if (rawAssets) {
             for (var mountPoint in rawAssets) {
@@ -334,16 +339,18 @@ var AssetLibrary = {
                     // backward compatibility since 1.10
                     _uuidToRawAsset[uuid] = new RawAssetEntry(mountPoint + '/' + url, type);
                     // init resources
-                    if (mountPoint === 'assets') {
-                        var ext = cc.path.extname(url);
-                        if (ext) {
-                            // trim base dir and extname
-                            url = url.slice(0, - ext.length);
-                        }
-                        var isSubAsset = info[2] === 1;
-                        // register
-                        resources.add(url, uuid, type, !isSubAsset);
+                    var ext = cc.path.extname(url);
+                    if (ext) {
+                        // trim base dir and extname
+                        url = url.slice(0, - ext.length);
                     }
+
+                    var isSubAsset = info[2] === 1;
+                    if (!assetTables[mountPoint]) {
+                        assetTables[mountPoint] = new AssetTable();
+                    } 
+
+                    assetTables[mountPoint].add(url, uuid, type, !isSubAsset);
                 }
             }
         }
@@ -355,6 +362,7 @@ var AssetLibrary = {
         // init cc.url
         cc.url._init((options.mountPaths && options.mountPaths.assets) || _rawAssetsBase + 'assets');
     }
+
 };
 
 // unload asset if it is destoryed
@@ -384,5 +392,68 @@ AssetLibrary._uuidToAsset = {};
 //        AssetLibrary.unloadAsset(this);
 //    }
 //};
+
+
+// TODO: Add BuiltinManager to handle builtin logic
+let _builtins = {
+    effect: {},
+    material: {}
+};
+
+let _builtinDeps = {};
+
+function loadBuiltins (name, type, cb) {
+    let dirname = name  + 's';
+    let builtin = _builtins[name] = {};
+    let internalMountPath = 'internal';
+    // internal path will be changed when run simulator
+    if (CC_PREVIEW && CC_JSB) {
+        internalMountPath = 'temp/internal';
+    }
+    cc.loader.loadResDir(dirname, type, internalMountPath, () => { }, (err, assets) => {
+        if (err) {
+            cc.error(err);
+        }
+        else {
+            for (let i = 0; i < assets.length; i++) {
+                var asset = assets[i];
+                var deps = cc.loader.getDependsRecursively(asset);
+                deps.forEach(uuid => _builtinDeps[uuid] = true);
+                builtin[`${asset.name}`] = asset;
+            }
+        }
+
+        cb();
+    });
+}
+
+AssetLibrary._loadBuiltins = function (cb) {
+    if (cc.game.renderType === cc.game.RENDER_TYPE_CANVAS) {
+        return cb && cb();
+    }
+
+    loadBuiltins('effect', cc.EffectAsset, () => {
+        loadBuiltins('material', cc.Material, cb);
+    });
+};
+
+AssetLibrary.getBuiltin = function (type, name) {
+    return _builtins[type][name];
+};
+
+AssetLibrary.getBuiltins = function (type) {
+    if (!type) return _builtins;
+    return _builtins[type];
+};
+AssetLibrary.resetBuiltins = function () {
+    _builtins = {
+        effect: {},
+        material: {}
+    };
+    _builtinDeps = {};
+};
+AssetLibrary.getBuiltinDeps = function () {
+    return _builtinDeps;
+}
 
 module.exports = cc.AssetLibrary = AssetLibrary;
