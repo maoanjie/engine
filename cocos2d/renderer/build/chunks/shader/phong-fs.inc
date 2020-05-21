@@ -3,19 +3,40 @@
 precision highp float;
 
 #include <cc-global>
-#include <encodings>
-
-#include <common>
-#include <normal>
-#include <diffuse>
-#include <specular>
-#include <emissive>
+#include <texture>
+#include <output>
 #include <alpha-test>
 
-#define CC_USE_TEXTURE CC_USE_ATTRIBUTE_UV0 && (USE_DIFFUSE_TEXTURE || USE_EMISSIVE_TEXTURE || USE_SPECULAR_TEXTURE || USE_NORMAL_TEXTURE)
+uniform PhongFrag {
+  lowp vec4 diffuseColor;
+  lowp vec4 specularColor;
+  lowp vec4 emissiveColor;
+  float glossiness;
+};
+
+#if USE_DIFFUSE_TEXTURE
+  uniform sampler2D diffuseTexture;
+#endif
+
+#if USE_SPECULAR && USE_SPECULAR_TEXTURE
+  uniform sampler2D specularTexture;
+#endif
+
+#if USE_EMISSIVE && USE_EMISSIVE_TEXTURE
+  uniform sampler2D emissiveTexture;
+#endif
+
+#if USE_NORMAL_TEXTURE
+  in vec3 v_tangent;
+  in vec3 v_bitangent;
+  uniform sampler2D normalTexture;
+#endif
+
+#define CC_USE_TEXTURE CC_USE_ATTRIBUTE_UV0 && (USE_DIFFUSE_TEXTURE || (USE_EMISSIVE && USE_EMISSIVE_TEXTURE) || (USE_SPECULAR && USE_SPECULAR_TEXTURE) || USE_NORMAL_TEXTURE)
 
 in vec3 v_worldNormal;
 in vec3 v_worldPos;
+in vec3 v_viewDirection;
 
 #if CC_USE_TEXTURE
   in mediump vec2 v_uv0;
@@ -25,48 +46,57 @@ in vec3 v_worldPos;
   in lowp vec4 v_color;
 #endif
 
-#include <phong>
+#include <shading-phong>
 
-void main () {
+void surf (out PhongSurface s) {
   vec4 diffuse = vec4(1, 1, 1, 1);
   
   #if CC_USE_ATTRIBUTE_COLOR
     diffuse *= v_color;
   #endif
 
+  diffuse *= diffuseColor;
   #if USE_DIFFUSE_TEXTURE
-    CALC_DIFFUSE(diffuse, v_uv0);
-  #else
-    CALC_DIFFUSE(diffuse);
+    CCTexture(diffuseTexture, v_uv0, diffuse);
   #endif
 
   ALPHA_TEST(diffuse);
 
-  PhongMaterial material;
-  material.diffuse = diffuse.rgb;
-  material.opacity = diffuse.a;
+  s.diffuse = diffuse.rgb;
+  s.opacity = diffuse.a;
 
-  #if USE_EMISSIVE_TEXTURE
-    CALC_EMISSIVE(material.emissive, v_uv0);
-  #else
-    CALC_EMISSIVE(material.emissive);
+  #if USE_EMISSIVE
+    s.emissive = emissiveColor.rgb;
+    #if USE_EMISSIVE_TEXTURE
+      CCTextureRGB(emissiveTexture, v_uv0, s.emissive);
+    #endif
   #endif
 
-  #if USE_SPECULAR_TEXTURE
-    CALC_SPECULAR(material.specular, v_uv0);
-  #else
-    CALC_SPECULAR(material.specular);
+  #if USE_SPECULAR
+    s.specular = specularColor.rgb;
+    #if USE_SPECULAR_TEXTURE
+      CCTextureRGB(specularTexture, v_uv0, s.specular);
+    #endif
   #endif
 
-  vec3 viewDirection = normalize(cc_cameraPos.xyz - v_worldPos);
-  vec4 phongColor;
-
-  vec3 normal = normalize(v_worldNormal);
+  s.normal = v_worldNormal;
   #if USE_NORMAL_TEXTURE
-    CALC_NORMAL(normal, v_worldPos, v_uv0);
+    vec3 nmmp = texture(normalTexture, v_uv0).xyz - vec3(0.5);
+    s.normal =
+      nmmp.x * normalize(v_tangent) +
+      nmmp.y * normalize(v_bitangent) +
+      nmmp.z * normalize(s.normal);
+    s.normal = normalize(s.normal);
   #endif
 
-  CALC_PHONG_LIGHTING(phongColor, material, normal, v_worldPos, viewDirection);
+  s.position = v_worldPos;
+  s.viewDirection = v_viewDirection;
+  s.glossiness = glossiness;
+}
 
-  gl_FragColor = LINEAR_TO_OUTPUT_TEXEL( phongColor );
+void main () {
+  PhongSurface s;
+  surf(s);
+  vec4 color = CCPhongShading(s);
+  gl_FragColor = CCFragOutput(color);
 }

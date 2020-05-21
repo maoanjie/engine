@@ -24,6 +24,7 @@
  THE SOFTWARE.
  ****************************************************************************/
 
+const MissingClass = CC_EDITOR && Editor.require('app://editor/page/scene-utils/missing-class-reporter').MissingClass;
 const js = require('../platform/js');
 const debug = require('../CCDebug');
 require('../platform/deserialize');
@@ -117,6 +118,21 @@ function loadDepends (pipeline, item, asset, depends, callback) {
                 item.content._uuid = item.uuid;
             }
         }
+
+        function loadCallback (item) {
+            var value = item.content;
+            if (this._stillUseUrl) {
+                value = (value && cc.RawAsset.wasRawAssetType(value.constructor)) ? value.nativeUrl : item.rawUrl;
+            }
+            if (this._ownerProp === '_nativeAsset') {
+                this._owner.url = item.url;
+            }
+            this._owner[this._ownerProp] = value;
+            if (item.uuid !== asset._uuid && dependKeys.indexOf(item.id) < 0) {
+                dependKeys.push(item.id);
+            }
+        }
+        
         for (var i = 0; i < depends.length; i++) {
             var dep = depends[i];
             var dependSrc = dep.uuid;
@@ -129,19 +145,6 @@ function loadDepends (pipeline, item, asset, depends, callback) {
             }
 
             var loadCallbackCtx = dep;
-            function loadCallback (item) {
-                var value = item.content;
-                if (this._stillUseUrl) {
-                    value = (value && cc.RawAsset.wasRawAssetType(value.constructor)) ? value.nativeUrl : item.rawUrl;
-                }
-                if (this._ownerProp === '_nativeAsset') {
-                    this._owner.url = item.url;
-                }
-                this._owner[this._ownerProp] = value;
-                if (item.uuid !== asset._uuid && dependKeys.indexOf(item.id) < 0) {
-                    dependKeys.push(item.id);
-                }
-            }
 
             if (item.complete || item.content) {
                 if (item.error) {
@@ -216,13 +219,7 @@ function canDeferredLoad (asset, item, isScene) {
     return res;
 }
 
-var MissingClass;
-
 function loadUuid (item, callback) {
-    if (CC_EDITOR) {
-        MissingClass = MissingClass || Editor.require('app://editor/page/scene-utils/missing-class-reporter').MissingClass;
-    }
-
     var json;
     if (typeof item.content === 'string') {
         try {
@@ -239,19 +236,19 @@ function loadUuid (item, callback) {
         return new Error(debug.getError(4924));
     }
 
-    var classFinder;
+    var classFinder, missingClass;
     var isScene = isSceneObj(json);
     if (isScene) {
         if (CC_EDITOR) {
-            MissingClass.hasMissingClass = false;
+            missingClass = MissingClass;
             classFinder = function (type, data, owner, propName) {
-                var res = MissingClass.classFinder(type, data, owner, propName);
+                var res = missingClass.classFinder(type, data, owner, propName);
                 if (res) {
                     return res;
                 }
                 return cc._MissingScript.getMissingWrapper(type, data);
             };
-            classFinder.onDereferenced = MissingClass.classFinder.onDereferenced;
+            classFinder.onDereferenced = missingClass.classFinder.onDereferenced;
         }
         else {
             classFinder = cc._MissingScript.safeFindClass;
@@ -287,8 +284,9 @@ function loadUuid (item, callback) {
     asset._uuid = item.uuid;
     asset.url = asset.nativeUrl;
 
-    if (CC_EDITOR && isScene && MissingClass.hasMissingClass) {
-        MissingClass.reportMissingClass(asset);
+    if (CC_EDITOR && missingClass) {
+        missingClass.reportMissingClass(asset);
+        missingClass.reset();
     }
 
     var deferredLoad = canDeferredLoad(asset, item, isScene);

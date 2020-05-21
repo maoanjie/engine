@@ -880,6 +880,10 @@ cc.RotateTo = cc.Class({
     name: 'cc.RotateTo',
     extends: cc.ActionInterval,
 
+    statics: {
+        _reverse: false,
+    },
+
     ctor:function (duration, dstAngle) {
         this._startAngle = 0;
         this._dstAngle = 0;
@@ -913,12 +917,12 @@ cc.RotateTo = cc.Class({
 
         let startAngle = target.angle % 360;
 
-        let angle = cc.macro.ROTATE_ACTION_CCW ? (this._dstAngle - startAngle) : (this._dstAngle + startAngle);
+        let angle = cc.RotateTo._reverse ? (this._dstAngle - startAngle) : (this._dstAngle + startAngle);
         if (angle > 180) angle -= 360;
         if (angle < -180) angle += 360;
 
         this._startAngle = startAngle;
-        this._angle = cc.macro.ROTATE_ACTION_CCW ? angle : -angle;
+        this._angle = cc.RotateTo._reverse ? angle : -angle;
     },
 
     reverse:function () {
@@ -965,8 +969,12 @@ cc.RotateBy = cc.Class({
     name: 'cc.RotateBy',
     extends: cc.ActionInterval,
 
+    statics: {
+        _reverse: false,
+    },
+
     ctor: function (duration, deltaAngle) {
-        deltaAngle *= cc.macro.ROTATE_ACTION_CCW ? 1 : -1;
+        deltaAngle *= cc.RotateBy._reverse ? 1 : -1;
 
         this._deltaAngle = 0;
         this._startAngle = 0;
@@ -1007,7 +1015,8 @@ cc.RotateBy = cc.Class({
     },
 
     reverse:function () {
-        var action = new cc.RotateBy(this._duration, -this._deltaAngle);
+        var action = new cc.RotateBy();
+        action.initWithDuration(this._duration, -this._deltaAngle);
         this._cloneDecoration(action);
         this._reverseEaseList(action);
         return action;

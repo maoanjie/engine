@@ -24,6 +24,8 @@
  THE SOFTWARE.
  ****************************************************************************/
 
+import Mat4 from '../../value-types/mat4';
+
 const utils = require('../../platform/utils');
 const macro = require('../../platform/CCMacro');
 const Types = require('./types');
@@ -35,7 +37,6 @@ const js = cc.js;
 const InputMode = Types.InputMode;
 const InputFlag = Types.InputFlag;
 const KeyboardReturnType = Types.KeyboardReturnType;
-const math = cc.vmath;
 
 // polyfill
 let polyfill = {
@@ -62,18 +63,19 @@ let _currentEditBoxImpl = null;
 let _fullscreen = false;
 let _autoResize = false;
 
+const BaseClass = EditBox._ImplClass;
  // This is an adapter for EditBoxImpl on web platform.
  // For more adapters on other platforms, please inherit from EditBoxImplBase and implement the interface.
 function WebEditBoxImpl () {
+    BaseClass.call(this);
     this._domId = `EditBoxId_${++_domCount}`;
     this._placeholderStyleSheet = null;
     this._elem = null;
     this._isTextArea = false;
-    this._editing = false;
 
     // matrix
-    this._worldMat = math.mat4.create();
-    this._cameraMat = math.mat4.create();
+    this._worldMat = new Mat4();
+    this._cameraMat = new Mat4();
     // matrix cache
     this._m00 = 0;
     this._m01 = 0;
@@ -83,6 +85,8 @@ function WebEditBoxImpl () {
     this._m13 = 0;
     this._w = 0;
     this._h = 0;
+    // viewport cache
+    this._cacheViewportRect = cc.rect(0, 0, 0, 0);
 
     // inputType cache
     this._inputMode = null;
@@ -105,7 +109,7 @@ function WebEditBoxImpl () {
     this._placeholderLineHeight = null;
 }
 
-js.extend(WebEditBoxImpl, EditBox._ImplClass);
+js.extend(WebEditBoxImpl, BaseClass);
 EditBox._ImplClass = WebEditBoxImpl;
 
 Object.assign(WebEditBoxImpl.prototype, {
@@ -134,17 +138,6 @@ Object.assign(WebEditBoxImpl.prototype, {
         _autoResize = cc.view._resizeWithBrowserSize;
     },
 
-    enable () {
-        // Do nothing
-    },
-
-    disable () {
-        // Need to hide dom when disable editBox on editing
-        if (this._editing) {
-            this._elem.blur();
-        }
-    },
-
     clear () {
         this._removeEventListeners();
         this._removeDomFromGameContainer();
@@ -158,7 +151,7 @@ Object.assign(WebEditBoxImpl.prototype, {
     },
 
     update () {
-        this._updateMatrix();
+        // do nothing...
     },
 
     setTabIndex (index) {
@@ -172,32 +165,21 @@ Object.assign(WebEditBoxImpl.prototype, {
         elem.style.height = height + 'px';
     },
 
-    setFocus (value) {
-        if (value) {
-            this.beginEditing();
-        }
-        else {
-            this._elem.blur();
-        }
-    },
-
-    isFocused () {
-        return this._editing;
-    },
-
     beginEditing () {
         if (_currentEditBoxImpl && _currentEditBoxImpl !== this) {
             _currentEditBoxImpl.setFocus(false);
         }
         this._editing = true;
         _currentEditBoxImpl = this;
+        this._delegate.editBoxEditingDidBegan();
         this._showDom();
         this._elem.focus();  // set focus
-        this._delegate.editBoxEditingDidBegan();  
     },
 
     endEditing () {
-        // Do nothing, handle endEditing on blur callback
+        if (this._elem) {
+            this._elem.blur();
+        }
     },
 
     // ==========================================================================
@@ -232,6 +214,7 @@ Object.assign(WebEditBoxImpl.prototype, {
     },
 
     _showDom () {
+        this._updateMatrix();
         this._updateMaxLength();
         this._updateInputType();
         this._updateStyleSheet();
@@ -273,20 +256,19 @@ Object.assign(WebEditBoxImpl.prototype, {
 
     _hideDomOnMobile () {
         if (cc.sys.os === cc.sys.OS_ANDROID) {
-            // Closing soft keyboard on mobile will fire 'resize' event
-            // So we need to set a timeout to enable resizeWithBrowserSize
+            if (_autoResize) {
+                cc.view.resizeWithBrowserSize(true);
+            }
+            // In case enter full screen when soft keyboard still showing
             setTimeout(function () {
                 if (!_currentEditBoxImpl) {
                     if (_fullscreen) {
                         cc.view.enableAutoFullScreen(true);
                     }
-                    if (_autoResize) {
-                        cc.view.resizeWithBrowserSize(true);
-                    }
                 }
             }, DELAY_TIME);
         }
-        
+
         // Some browser like wechat on iOS need to mannully scroll back window
         this._scrollBackWindow();
     },
@@ -322,12 +304,13 @@ Object.assign(WebEditBoxImpl.prototype, {
         node.getWorldMatrix(this._worldMat);
         let worldMat = this._worldMat;
         let worldMatm = worldMat.m;
-
+        let localView = cc.view;
         // check whether need to update
         if (this._m00 === worldMatm[0] && this._m01 === worldMatm[1] &&
             this._m04 === worldMatm[4] && this._m05 === worldMatm[5] &&
             this._m12 === worldMatm[12] && this._m13 === worldMatm[13] &&
-            this._w === node._contentSize.width && this._h === node._contentSize.height) {
+            this._w === node._contentSize.width && this._h === node._contentSize.height &&
+            this._cacheViewportRect.equals(localView._viewportRect)) {
             return;
         }
 
@@ -340,15 +323,17 @@ Object.assign(WebEditBoxImpl.prototype, {
         this._m13 = worldMatm[13];
         this._w = node._contentSize.width;
         this._h = node._contentSize.height;
+        // update viewport cache
+        this._cacheViewportRect.set(localView._viewportRect);
 
-        let scaleX = cc.view._scaleX, scaleY = cc.view._scaleY,
-            viewport = cc.view._viewportRect,
-            dpr = cc.view._devicePixelRatio;
+        let scaleX = localView._scaleX, scaleY = localView._scaleY,
+            viewport = localView._viewportRect,
+            dpr = localView._devicePixelRatio;
 
         _vec3.x = -node._anchorPoint.x * this._w;
         _vec3.y = -node._anchorPoint.y * this._h;
     
-        math.mat4.translate(worldMat, worldMat, _vec3);
+        Mat4.transform(worldMat, worldMat, _vec3);
 
         // can't find camera in editor
         let cameraMat;
@@ -359,7 +344,7 @@ Object.assign(WebEditBoxImpl.prototype, {
             let camera = cc.Camera.findCamera(node);
             camera.getWorldToScreenMatrix2D(this._cameraMat);
             cameraMat = this._cameraMat;
-            math.mat4.mul(cameraMat, cameraMat, worldMat);
+            Mat4.mul(cameraMat, cameraMat, worldMat);
         }
         
     
@@ -548,7 +533,7 @@ Object.assign(WebEditBoxImpl.prototype, {
         // font size
         elem.style.fontSize = `${fontSize}px`;
         // font color
-        elem.style.color = textLabel.node.color.toCSS('rgba');
+        elem.style.color = textLabel.node.color.toCSS();
         // font family
         elem.style.fontFamily = font;
         // text-align
@@ -603,7 +588,7 @@ Object.assign(WebEditBoxImpl.prototype, {
         let styleEl = this._placeholderStyleSheet;
         
         // font color
-        let fontColor = placeholderLabel.node.color.toCSS('rgba');
+        let fontColor = placeholderLabel.node.color.toCSS();
         // line height
         let lineHeight = placeholderLabel.fontSize;  // top vertical align by default
         // horizontal align
@@ -689,6 +674,10 @@ Object.assign(WebEditBoxImpl.prototype, {
             impl._delegate.editBoxEditingDidEnded();
         };
 
+        cbs.onResize = function () {
+            impl._updateMatrix();
+        };
+
 
         elem.addEventListener('compositionstart', cbs.compositionStart);
         elem.addEventListener('compositionend', cbs.compositionEnd);
@@ -696,6 +685,10 @@ Object.assign(WebEditBoxImpl.prototype, {
         elem.addEventListener('keydown', cbs.onKeydown);
         elem.addEventListener('blur', cbs.onBlur);
         elem.addEventListener('touchstart', cbs.onClick);
+
+        // editBox is editing, need to update matrix when window resized or orientation changed
+        window.addEventListener('resize', cbs.onResize);
+        window.addEventListener('orientationchange', cbs.onResize);
     },
 
     _removeEventListeners () {
@@ -708,6 +701,9 @@ Object.assign(WebEditBoxImpl.prototype, {
         elem.removeEventListener('keydown', cbs.onKeydown);
         elem.removeEventListener('blur', cbs.onBlur);
         elem.removeEventListener('touchstart', cbs.onClick);
+
+        window.removeEventListener('resize', cbs.onResize);
+        window.removeEventListener('orientationchange', cbs.onResize);
         
         cbs.compositionStart = null;
         cbs.compositionEnd = null;
@@ -715,6 +711,7 @@ Object.assign(WebEditBoxImpl.prototype, {
         cbs.onKeydown = null;
         cbs.onBlur = null;
         cbs.onClick = null;
+        cbs.onResize = null;
     },
 });
 

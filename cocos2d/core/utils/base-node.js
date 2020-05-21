@@ -362,7 +362,7 @@ var BaseNode = cc.Class({
             return;
         }
         if (CC_EDITOR && cc.engine && !cc.engine.isPlaying) {
-            if (_Scene.DetectConflict.beforeAddChild(this)) {
+            if (_Scene.DetectConflict.beforeAddChild(this, value)) {
                 return;
             }
         }
@@ -676,7 +676,6 @@ var BaseNode = cc.Class({
      * 如果这个节点是一个孤节点，那么什么都不会发生。
      * @method removeFromParent
      * @param {Boolean} [cleanup=true] - true if all actions and callbacks on this node should be removed, false otherwise.
-     * @see cc.Node#removeFromParentAndCleanup
      * @example
      * node.removeFromParent();
      * node.removeFromParent(false);
@@ -782,9 +781,9 @@ var BaseNode = cc.Class({
      * @param {Function|String} typeOrClassName
      * @return {Component}
      * @example
-     * // get sprite component.
+     * // get sprite component
      * var sprite = node.getComponent(cc.Sprite);
-     * // get custom test calss.
+     * // get custom test class
      * var test = node.getComponent("Test");
      * @typescript
      * getComponent<T extends Component>(type: {prototype: T}): T

@@ -45,8 +45,8 @@ function _copyprop(name, source, target) {
 }
 
 /**
- * This module provides some JavaScript utilities.
- * All members can be accessed with "cc.js".
+ * !#en This module provides some JavaScript utilities. All members can be accessed with `cc.js`.
+ * !#zh 这个模块封装了 JavaScript 相关的一些实用函数，你可以通过 `cc.js` 来访问这个模块。
  * @submodule js
  * @module js
  */
@@ -225,6 +225,7 @@ var js = {
      * Checks whether obj is an empty object
      * @method isEmptyObject
      * @param {any} obj 
+     * @returns {Boolean}
      */
     isEmptyObject: function (obj) {
         for (var key in obj) {
@@ -566,7 +567,7 @@ cc.js.unregisterClass to remove the id of unused class';
 })();
 
 /**
- * Defines a polyfill field for obsoleted codes.
+ * Defines a polyfill field for deprecated codes.
  * @method obsolete
  * @param {any} obj - YourObject or YourClass.prototype
  * @param {String} obsoleted - "OldParam" or "YourClass.OldParam"
@@ -579,7 +580,7 @@ js.obsolete = function (obj, obsoleted, newExpr, writable) {
     var newProp = extractPropName.exec(newExpr)[0];
     function get () {
         if (CC_DEV) {
-            cc.warnID(5400, obsoleted, newExpr);
+            cc.warnID(1400, obsoleted, newExpr);
         }
         return this[newProp];
     }
@@ -588,7 +589,7 @@ js.obsolete = function (obj, obsoleted, newExpr, writable) {
             get,
             function (value) {
                 if (CC_DEV) {
-                    cc.warnID(5401, obsoleted, newExpr);
+                    cc.warnID(1400, obsoleted, newExpr);
                 }
                 this[newProp] = value;
             }

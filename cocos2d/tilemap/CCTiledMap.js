@@ -65,7 +65,7 @@ let Orientation = cc.Enum({
     ISO: 2
 });
 
-/*
+/**
  * The property type of tiled map.
  * @enum TiledMap.Property
  * @static
@@ -114,7 +114,7 @@ let Property = cc.Enum({
     TILE: 5
 });
 
-/*
+/**
  * The tile flags of tiled map.
  * @enum TiledMap.TileFlag
  * @static
@@ -156,7 +156,7 @@ let TileFlag = cc.Enum({
     FLIPPED_MASK: (~(0x80000000 | 0x40000000 | 0x20000000 | 0x10000000)) >>> 0
 });
 
-/*
+/**
  * !#en The stagger axis of Hex tiled map.
  * !#zh 六边形地图的 stagger axis 值
  * @enum TiledMap.StaggerAxis
@@ -178,7 +178,7 @@ let StaggerAxis = cc.Enum({
     STAGGERAXIS_Y : 1
 });
 
-/*
+/**
  * !#en The stagger index of Hex tiled map.
  * !#zh 六边形地图的 stagger index 值
  * @enum TiledMap.RenderOrder
@@ -200,7 +200,7 @@ let StaggerIndex = cc.Enum({
     STAGGERINDEX_EVEN : 1
 });
 
-/*
+/**
  * !#en The render order of tiled map.
  * !#zh 地图的渲染顺序
  * @enum TiledMap.RenderOrder
@@ -208,13 +208,28 @@ let StaggerIndex = cc.Enum({
  */
 let RenderOrder = cc.Enum({
     /**
-     * @property STAGGERINDEX_ODD
+     * @property RightDown
      * @type {Number}
      * @static
      */
     RightDown : 0,
+    /**
+     * @property RightUp
+     * @type {Number}
+     * @static
+     */
     RightUp : 1,
+    /**
+     * @property LeftDown
+     * @type {Number}
+     * @static
+     */
     LeftDown: 2,
+    /**
+     * @property LeftUp
+     * @type {Number}
+     * @static
+     */
     LeftUp: 3,
 });
 
@@ -536,9 +551,13 @@ let TiledMap = cc.Class({
         if (file) {
             let texValues = file.textures;
             let texKeys = file.textureNames;
+            let texSizes = file.textureSizes;
             let textures = {};
+            let textureSizes = {};
             for (let i = 0; i < texValues.length; ++i) {
-                textures[texKeys[i]] = texValues[i];
+                let texName = texKeys[i];
+                textures[texName] = texValues[i];
+                textureSizes[texName] = texSizes[i];
             }
 
             let imageLayerTextures = {};
@@ -557,7 +576,7 @@ let TiledMap = cc.Class({
                 }
             }
 
-            let mapInfo = new cc.TMXMapInfo(file.tmxXmlStr, tsxMap, textures, imageLayerTextures);
+            let mapInfo = new cc.TMXMapInfo(file.tmxXmlStr, tsxMap, textures, textureSizes, imageLayerTextures);
             let tilesets = mapInfo.getTilesets();
             if(!tilesets || tilesets.length === 0)
                 cc.logID(7241);
@@ -672,6 +691,8 @@ let TiledMap = cc.Class({
         let node = this.node;
         let layerInfos = mapInfo.getAllChildren();
         let textures = this._textures;
+        let maxWidth = 0;
+        let maxHeight = 0;
 
         if (layerInfos && layerInfos.length > 0) {
             for (let i = 0, len = layerInfos.length; i < len; i++) {
@@ -687,6 +708,7 @@ let TiledMap = cc.Class({
                     node.addChild(child);
                 }
 
+                child.setSiblingIndex(i);
                 child.active = layerInfo.visible;
 
                 if (layerInfo instanceof cc.TMXLayerInfo) {
@@ -719,13 +741,18 @@ let TiledMap = cc.Class({
                     if (!image) {
                         image = child.addComponent(cc.Sprite);
                     }
-                    image.spriteFrame = new cc.SpriteFrame();
-                    image.spriteFrame.setTexture(texture);
+                    
+                    let spf = image.spriteFrame || new cc.SpriteFrame();
+                    spf.setTexture(texture);
+                    image.spriteFrame = spf;
 
                     child.width = texture.width;
                     child.height = texture.height;
                     images.push(child);
                 }
+
+                maxWidth = Math.max(maxWidth, child.width);
+                maxHeight = Math.max(maxHeight, child.height);
             }
         }
 
@@ -737,8 +764,8 @@ let TiledMap = cc.Class({
             }
         }
 
-        this.node.width = this._mapSize.width * this._tileSize.width;
-        this.node.height = this._mapSize.height * this._tileSize.height;
+        this.node.width = maxWidth;
+        this.node.height = maxHeight;
         this._syncAnchorPoint();
     },
 
@@ -845,11 +872,16 @@ cc.TiledMap.fillTextureGrids = function (tileset, texGrids, texId) {
         count = rows * cols,
 
         gid = tileset.firstGid,
-        maxGid = tileset.firstGid + count,
         grid = null,
         override = texGrids[gid] ? true : false,
         texelCorrect = cc.macro.FIX_ARTIFACTS_BY_STRECHING_TEXEL_TMX ? 0.5 : 0;
 
+    // Tiledmap may not be partitioned into blocks, resulting in a count value of 0
+    if (count <= 0) {
+        count = 1;
+    }
+
+    let maxGid = tileset.firstGid + count;
     for (; gid < maxGid; ++gid) {
         // Avoid overlapping
         if (override && !texGrids[gid]) {

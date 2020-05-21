@@ -31,6 +31,8 @@ var idGenerater = new (require('../platform/id-generater'))('Comp');
 var IsOnEnableCalled = CCObject.Flags.IsOnEnableCalled;
 var IsOnLoadCalled = CCObject.Flags.IsOnLoadCalled;
 
+var ActionManagerExist = !!cc.ActionManager;
+
 /**
  * !#en
  * Base class for everything attached to Node(Entity).<br/>
@@ -50,7 +52,7 @@ var Component = cc.Class({
     extends: CCObject,
 
     ctor: CC_EDITOR ? function () {
-        if (window._Scene && _Scene.AssetsWatcher) {
+        if ((typeof _Scene !== "undefined") && _Scene.AssetsWatcher) {
             _Scene.AssetsWatcher.initComponent(this);
         }
         this._id = Editor.Utils.UuidUtils.uuid();
@@ -234,6 +236,7 @@ var Component = cc.Class({
      * !#zh 如果该组件启用，则每帧调用 LateUpdate。<br/>
      * 该方法为生命周期方法，父类未必会有实现。并且你只能在该方法内部调用父类的实现，不可在其它地方直接调用该方法。
      * @method lateUpdate
+     * @param {Number} dt - the delta time in seconds it took to complete the last frame
      * @protected
      */
     lateUpdate: null,
@@ -497,12 +500,16 @@ var Component = cc.Class({
     },
 
     _onPreDestroy () {
+        if (ActionManagerExist) {
+            cc.director.getActionManager().removeAllActionsFromTarget(this);
+        }
+
         // Schedules
         this.unscheduleAllCallbacks();
 
         // Remove all listeners
         var eventTargets = this.__eventTargets;
-        for (var i = 0, l = eventTargets.length; i < l; ++i) {
+        for (var i = eventTargets.length - 1; i >= 0; --i) {
             var target = eventTargets[i];
             target && target.targetOff(this);
         }
@@ -541,7 +548,7 @@ var Component = cc.Class({
      * @param {function} callback The callback function
      * @param {Number} [interval=0]  Tick interval in seconds. 0 means tick every frame.
      * @param {Number} [repeat=cc.macro.REPEAT_FOREVER]    The selector will be executed (repeat + 1) times, you can use cc.macro.REPEAT_FOREVER for tick infinitely.
-     * @param {Number} [delay=0]     The amount of time that the first tick will wait before execution.
+     * @param {Number} [delay=0]     The amount of time that the first tick will wait before execution. Unit: s
      * @example
      * var timeCallback = function (dt) {
      *   cc.log("time: " + dt);
@@ -550,9 +557,10 @@ var Component = cc.Class({
      */
     schedule (callback, interval, repeat, delay) {
         cc.assertID(callback, 1619);
-        cc.assertID(interval >= 0, 1620);
 
         interval = interval || 0;
+        cc.assertID(interval >= 0, 1620);
+
         repeat = isNaN(repeat) ? cc.macro.REPEAT_FOREVER : repeat;
         delay = delay || 0;
 
@@ -573,7 +581,7 @@ var Component = cc.Class({
      * @method scheduleOnce
      * @see cc.Node#schedule
      * @param {function} callback  A function wrapped as a selector
-     * @param {Number} [delay=0]  The amount of time that the first tick will wait before execution.
+     * @param {Number} [delay=0]  The amount of time that the first tick will wait before execution. Unit: s
      * @example
      * var timeCallback = function (dt) {
      *   cc.log("time: " + dt);

@@ -123,6 +123,10 @@ cc.Director = function () {
     this._totalFrames = 0;
     this._lastUpdate = 0;
     this._deltaTime = 0.0;
+    this._startTime = 0.0;
+
+    // ParticleSystem max step delta time
+    this._maxParticleDeltaTime = 0.0;
 
     // Scheduler for user registration update
     this._scheduler = null;
@@ -146,6 +150,7 @@ cc.Director.prototype = {
     init: function () {
         this._totalFrames = 0;
         this._lastUpdate = performance.now();
+        this._startTime = this._lastUpdate;
         this._paused = false;
         this._purgeDirectorInNextLoop = false;
         this._winSizeInPoints = cc.size(0, 0);
@@ -202,6 +207,14 @@ cc.Director.prototype = {
             this._physicsManager = null;
         }
 
+        // physics 3d manager
+        if (cc.Physics3DManager) {
+            this._physics3DManager = new cc.Physics3DManager();
+            this._scheduler.scheduleUpdate(this._physics3DManager, Scheduler.PRIORITY_SYSTEM, false);
+        } else {
+            this._physics3DManager = null;
+        }
+
         // WidgetManager
         if (cc._widgetManager) {
             cc._widgetManager.init(this);
@@ -215,7 +228,10 @@ cc.Director.prototype = {
      */
     calculateDeltaTime: function (now) {
         if (!now) now = performance.now();
-        this._deltaTime = (now - this._lastUpdate) / 1000;
+
+        // avoid delta time from being negative
+        // negative deltaTime would be caused by the precision of now's value, for details please see: https://developer.mozilla.org/zh-CN/docs/Web/API/window/requestAnimationFrame
+        this._deltaTime = now > this._lastUpdate ? (now - this._lastUpdate) / 1000 : 0;
         if (CC_DEBUG && (this._deltaTime > 1))
             this._deltaTime = 1 / 60.0;
 
@@ -543,7 +559,7 @@ cc.Director.prototype = {
      */
     loadScene: function (sceneName, onLaunched, _onUnloaded) {
         if (this._loadingScene) {
-            cc.errorID(1208, sceneName, this._loadingScene);
+            cc.warnID(1208, sceneName, this._loadingScene);
             return false;
         }
         var info = this._getSceneUuid(sceneName);
@@ -781,6 +797,16 @@ cc.Director.prototype = {
     },
 
     /**
+     * !#en Returns the total passed time since game start, unit: ms
+     * !#zh 获取从游戏开始到现在总共经过的时间，单位为 ms
+     * @method getTotalTime
+     * @return {Number}
+     */
+    getTotalTime: function () {
+        return performance.now() - this._startTime;
+    },
+
+    /**
      * !#en Returns how many frames were called since the director started.
      * !#zh 获取 director 启动以来游戏运行的总帧数。
      * @method getTotalFrames
@@ -877,6 +903,16 @@ cc.Director.prototype = {
         return this._physicsManager;
     },
 
+    /**
+     * !#en Returns the cc.Physics3DManager associated with this director.
+     * !#zh 返回与 director 相关联的 cc.Physics3DManager （物理管理器）。
+     * @method getPhysics3DManager
+     * @return {Physics3DManager}
+     */
+    getPhysics3DManager: function () {
+        return this._physics3DManager;
+    },
+
     // Loop management
     /*
      * Starts Animation
@@ -941,17 +977,26 @@ cc.Director.prototype = {
 
             // Update
             if (!this._paused) {
+                // before update
                 this.emit(cc.Director.EVENT_BEFORE_UPDATE);
+
                 // Call start for new added components
                 this._compScheduler.startPhase();
+
                 // Update for components
                 this._compScheduler.updatePhase(this._deltaTime);
                 // Engine update with scheduler
                 this._scheduler.update(this._deltaTime);
+
                 // Late update for components
                 this._compScheduler.lateUpdatePhase(this._deltaTime);
+
+                // After life-cycle executed
+                this._compScheduler.clearup();
+
                 // User can use this event to do things after update
                 this.emit(cc.Director.EVENT_AFTER_UPDATE);
+                
                 // Destroy entities that have been removed recently
                 Obj._deferredDestroy();
             }
@@ -1152,6 +1197,22 @@ cc.Director.PROJECTION_CUSTOM = 3;
  * @deprecated since v2.0
  */
 cc.Director.PROJECTION_DEFAULT = cc.Director.PROJECTION_2D;
+
+/**
+ * The event which will be triggered before the physics process.<br/>
+ * 物理过程之前所触发的事件。
+ * @event Director.EVENT_BEFORE_PHYSICS
+ * @readonly
+ */
+cc.Director.EVENT_BEFORE_PHYSICS = 'director_before_physics';
+
+/**
+ * The event which will be triggered after the physics process.<br/>
+ * 物理过程之后所触发的事件。
+ * @event Director.EVENT_AFTER_PHYSICS
+ * @readonly
+ */
+cc.Director.EVENT_AFTER_PHYSICS = 'director_after_physics';
 
 /**
  * @module cc

@@ -4,7 +4,7 @@ precision highp float;
 
 #include <cc-local>
 #include <cc-global>
-#include <skinning>
+#include <input-standard>
 #include <shadow>
 
 #define CC_USE_TEXTURE CC_USE_ATTRIBUTE_UV0 && (USE_DIFFUSE_TEXTURE || USE_EMISSIVE_TEXTURE || USE_SPECULAR_TEXTURE || USE_NORMAL_TEXTURE)
@@ -12,49 +12,49 @@ precision highp float;
 uniform MAIN_TILING {
   vec2 mainTiling;
   vec2 mainOffset;
-}
-
-in vec3 a_position;
+};
 
 #if CC_USE_TEXTURE
-  in mediump vec2 a_uv0;
   out mediump vec2 v_uv0;
 #endif
 
 #if CC_USE_ATTRIBUTE_COLOR
-  in lowp vec4 a_color;
   out lowp vec4 v_color;
 #endif
 
-#if CC_USE_ATTRIBUTE_NORMAL
-  in vec3 a_normal;
+#if USE_NORMAL_TEXTURE
+  out vec3 v_tangent;
+  out vec3 v_bitangent;
 #endif
 
 out vec3 v_worldNormal;
 out vec3 v_worldPos;
+out vec3 v_viewDirection;
 
 void main () {
-  vec4 position = vec4(a_position, 1);
-  vec4 normal = vec4(1, 1, 1, 0);
+  StandardVertInput In;
+  CCVertInput(In);
 
-  #if CC_USE_ATTRIBUTE_NORMAL
-    normal.xyz *= a_normal;
-  #endif
+  vec4 position = In.position;
 
-  SKIN_VERTEX(position, normal);
-
+  v_worldNormal = normalize((cc_matWorldIT * vec4(In.normal, 0)).xyz);
   v_worldPos = (cc_matWorld * position).xyz;
-  v_worldNormal = (cc_matWorldIT * normal).xyz;
-
-  CLAC_SHADOW(v_worldPos);
+  v_viewDirection = normalize(cc_cameraPos.xyz - v_worldPos);
   
-  #if CC_USE_ATTRIBUTE_COLOR
-    v_color = a_color;
+  #if CC_USE_TEXTURE
+    v_uv0 = In.uv * mainTiling + mainOffset;
   #endif
 
-  #if CC_USE_TEXTURE
-      v_uv0 = a_uv0 * mainTiling + mainOffset;
+  #if CC_USE_ATTRIBUTE_COLOR
+    v_color = In.color;
   #endif
+
+  #if USE_NORMAL_TEXTURE
+    v_tangent = normalize((cc_matWorld * vec4(In.tangent.xyz, 0.0)).xyz);
+    v_bitangent = cross(v_worldNormal, v_tangent) * In.tangent.w; // note the cross order
+  #endif
+
+  CCShadowInput(v_worldPos);
   
   gl_Position = cc_matViewProj * cc_matWorld * position;
 }

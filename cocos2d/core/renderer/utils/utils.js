@@ -24,7 +24,7 @@ module.exports = {
     deleteFromDynamicAtlas (comp, frame) {
         if (frame && !CC_TEST) {
             if (frame._original && dynamicAtlasManager) {
-                dynamicAtlasManager.deleteAtlasTexture(frame);
+                dynamicAtlasManager.deleteAtlasSpriteFrame(frame);
                 frame._resetDynamicAtlasFrame();
             }
         }
@@ -36,7 +36,7 @@ module.exports = {
                 if (comp.font._nativeAsset) return comp.font._nativeAsset;
                 cc.loader.load(comp.font.nativeUrl, (err, asset) => {
                     comp.font._nativeAsset = asset;
-                    comp._updateRenderData(true);
+                    comp.setVertsDirty();
                 });
                 return 'Arial';
             }
@@ -44,7 +44,7 @@ module.exports = {
             return 'Arial';
         }
         else {
-            return comp.fontFamily;
+            return comp.fontFamily || 'Arial';
         }
     },
 

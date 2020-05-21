@@ -27,10 +27,12 @@
 const TrackEntryListeners = require('./track-entry-listeners');
 const RenderComponent = require('../../cocos2d/core/components/CCRenderComponent');
 const spine = require('./lib/spine');
-const Material = require('../../cocos2d/core/assets/material/CCMaterial');
 const Graphics = require('../../cocos2d/core/graphics/graphics');
+const RenderFlow = require('../../cocos2d/core/renderer/render-flow');
+const FLAG_POST_RENDER = RenderFlow.FLAG_POST_RENDER;
 
 let SkeletonCache = require('./skeleton-cache');
+let AttachUtil = require('./AttachUtil');
 
 /**
  * @module sp
@@ -92,7 +94,7 @@ sp.Skeleton = cc.Class({
     editor: CC_EDITOR && {
         menu: 'i18n:MAIN_MENU.component.renderers/Spine Skeleton',
         help: 'app://docs/html/components/spine.html',
-        //playOnFocus: true
+        inspector: 'packages://inspector/inspectors/comps/skeleton2d.js',
     },
 
     statics: {
@@ -191,12 +193,19 @@ sp.Skeleton = cc.Class({
          */
         _defaultSkinIndex: {
             get () {
-                if (this.skeletonData && this.defaultSkin) {
+                if (this.skeletonData) {
                     var skinsEnum = this.skeletonData.getSkinsEnum();
-                    if (skinsEnum) {
-                        var skinIndex = skinsEnum[this.defaultSkin];
-                        if (skinIndex !== undefined) {
-                            return skinIndex;
+                    if(skinsEnum) {
+                        if(this.defaultSkin === "") {
+                            if(skinsEnum.hasOwnProperty(0)) {
+                                this._defaultSkinIndex = 0;
+                                return 0;
+                            }
+                        } else {
+                            var skinIndex = skinsEnum[this.defaultSkin];
+                            if (skinIndex !== undefined) {
+                                return skinIndex;
+                            }
                         }
                     }
                 }
@@ -425,48 +434,73 @@ sp.Skeleton = cc.Class({
         this._skeleton = null;
         this._rootBone = null;
         this._listener = null;
-        this._boundingBox = cc.rect();
         this._materialCache = {};
         this._debugRenderer = null;
         this._startSlotIndex = -1;
         this._endSlotIndex = -1;
         this._startEntry = {animation : {name : ""}, trackIndex : 0};
         this._endEntry = {animation : {name : ""}, trackIndex : 0};
+        this.attachUtil = new AttachUtil();
     },
 
-    // override
-    setMaterial (index, material) {
-        this._super(index, material);
+    // override base class _getDefaultMaterial to modify default material
+    _getDefaultMaterial () {
+        return cc.Material.getBuiltinMaterial('2d-spine');
+    },
+
+    // override base class _updateMaterial to set define value and clear material cache
+    _updateMaterial () {
+        let useTint = this.useTint || (this.isAnimationCached() && !CC_NATIVERENDERER);
+        let baseMaterial = this.getMaterial(0);
+        if (baseMaterial) {
+            baseMaterial.define('USE_TINT', useTint);
+            baseMaterial.define('CC_USE_MODEL', !this.enableBatch);
+        }
         this._materialCache = {};
     },
 
-    _updateUseTint () {
-        let baseMaterial = this.getMaterial(0);
-        let useTint = this.useTint || this.isAnimationCached();
-        if (baseMaterial) {
-            baseMaterial.define('USE_TINT', useTint);
-        }
-        var cache = this._materialCache;
-        for (var mKey in cache) {
-            var material = cache[mKey];
-            if (material) {
-                material.define('USE_TINT', useTint);
-            }
+    // override base class disableRender to clear post render flag
+    disableRender () {
+        this._super();
+        this.node._renderFlag &= ~FLAG_POST_RENDER;
+    },
+
+    // override base class disableRender to add post render flag
+    markForRender (enable) {
+        this._super(enable);
+        if (enable) {
+            this.node._renderFlag |= FLAG_POST_RENDER;
+        } else {
+            this.node._renderFlag &= ~FLAG_POST_RENDER;
         }
     },
 
+    // if change use tint mode, just clear material cache
+    _updateUseTint () {
+        let baseMaterial = this.getMaterial(0);
+        if (baseMaterial) {
+            let useTint = this.useTint || (this.isAnimationCached() && !CC_NATIVERENDERER);
+            baseMaterial.define('USE_TINT', useTint);
+        }
+        this._materialCache = {};
+    },
+
+    // if change use batch mode, just clear material cache
     _updateBatch () {
         let baseMaterial = this.getMaterial(0);
         if (baseMaterial) {
             baseMaterial.define('CC_USE_MODEL', !this.enableBatch);
         }
-        let cache = this._materialCache;
-        for (let mKey in cache) {
-            let material = cache[mKey];
-            if (material) {
-                material.define('CC_USE_MODEL', !this.enableBatch);
-            }
+        this._materialCache = {};
+    },
+
+    _validateRender () {
+        let skeletonData = this.skeletonData;
+        if (!skeletonData || !skeletonData.isTexturesLoaded()) {
+            this.disableRender();
+            return;
         }
+        this._super();
     },
 
     /**
@@ -489,6 +523,7 @@ sp.Skeleton = cc.Class({
                 this._skeletonCache = SkeletonCache.sharedCache;
             } else if (this._cacheMode === AnimationCacheMode.PRIVATE_CACHE) {
                 this._skeletonCache = new SkeletonCache;
+                this._skeletonCache.enablePrivateMode();
             }
         }
 
@@ -506,7 +541,7 @@ sp.Skeleton = cc.Class({
             this._rootBone = this._skeleton.getRootBone();
         }
 
-        this._activateMaterial();
+        this.markForRender(true);
     },
 
     /**
@@ -551,6 +586,7 @@ sp.Skeleton = cc.Class({
 
     // IMPLEMENT
     __preload () {
+        this._super();
         if (CC_EDITOR) {
             var Flags = cc.Object.Flags;
             this._objFlags |= (Flags.IsAnchorLocked | Flags.IsSizeLocked);
@@ -566,7 +602,6 @@ sp.Skeleton = cc.Class({
             }
         }
 
-        this._resetAssembler();
         this._updateSkeletonData();
         this._updateDebugDraw();
         this._updateUseTint();
@@ -598,6 +633,7 @@ sp.Skeleton = cc.Class({
      * !#en Whether in cached mode.
      * !#zh 当前是否处于缓存模式。
      * @method isAnimationCached
+     * @return {Boolean}
      */
     isAnimationCached () {
         if (CC_EDITOR) return false;
@@ -650,6 +686,9 @@ sp.Skeleton = cc.Class({
 
     _updateCache (dt) {
         let frameCache = this._frameCache;
+        if (!frameCache.isInited()) {
+            return;
+        }
         let frames = frameCache.frames;
         let frameTime = SkeletonCache.FrameTime;
 
@@ -694,48 +733,6 @@ sp.Skeleton = cc.Class({
                 state.apply(skeleton);
             }
         }
-    },
-
-    _activateMaterial () {
-        if (!this.skeletonData) {
-            this.disableRender();
-            return;
-        }
-        
-        this.skeletonData.ensureTexturesLoaded(function (result) {
-            if (!result) {
-                this.disableRender();
-                return;
-            }
-            
-            let material = this.sharedMaterials[0];
-            if (!material) {
-                material = Material.getInstantiatedBuiltinMaterial('2d-spine', this);
-            } else {
-                material = Material.getInstantiatedMaterial(material, this);
-            }
-
-            material.define('CC_USE_MODEL', true);
-            this._prepareToRender(material);
-        }, this);
-    },
-
-    _prepareToRender (material) {
-        this.setMaterial(0, material);
-        // only when component's onEnable function has been invoke, need to enable render
-        if (this.node && this.node._renderComponent == this) {
-            this.markForRender(true);
-        }
-    },
-
-    onEnable () {
-        this._super();
-        this._activateMaterial();
-    },
-
-    onRestore () {
-        // Destroyed and restored in Editor
-        this._boundingBox = cc.rect();
     },
 
     /**
@@ -825,7 +822,9 @@ sp.Skeleton = cc.Class({
     updateAnimationCache (animName) {
         if (!this.isAnimationCached()) return;
         let uuid = this.skeletonData._uuid;
-        this._skeletonCache.updateAnimationCache(uuid, animName);
+        if (this._skeletonCache) {
+            this._skeletonCache.updateAnimationCache(uuid, animName);
+        }
     },
 
     /**
@@ -837,7 +836,9 @@ sp.Skeleton = cc.Class({
      */
     invalidAnimationCache () {
         if (!this.isAnimationCached()) return;
-        this._skeletonCache.invalidAnimationCache(this.skeletonData._uuid);
+        if (this._skeletonCache) {
+            this._skeletonCache.invalidAnimationCache(this.skeletonData._uuid);
+        }
     },
 
     /**
@@ -988,6 +989,7 @@ sp.Skeleton = cc.Class({
             if (trackIndex !== 0) {
                 cc.warn("Track index can not greater than 0 in cached mode.");
             }
+            if (!this._skeletonCache) return null;
             let cache = this._skeletonCache.getAnimationCache(this.skeletonData._uuid, name);
             if (!cache) {
                 cache = this._skeletonCache.initAnimationCache(this.skeletonData._uuid, name);
@@ -997,6 +999,9 @@ sp.Skeleton = cc.Class({
                 this._accTime = 0;
                 this._playCount = 0;
                 this._frameCache = cache;
+                if (this.attachUtil._hasAttachedNode()) {
+                    this._frameCache.enableCacheAttachedInfo();
+                }
                 this._frameCache.updateToFrame(0);
                 this._curFrame = this._frameCache.frames[0];
             }
@@ -1254,8 +1259,8 @@ sp.Skeleton = cc.Class({
 
     /**
      * !#en Get the animation state object
-     * !#zh 获取
-     * @method setTrackEventListener
+     * !#zh 获取动画状态
+     * @method getState
      * @return {sp.spine.AnimationState} state
      */
     getState () {
@@ -1291,9 +1296,16 @@ sp.Skeleton = cc.Class({
     },
 
     _updateSkeletonData () {
-        if (!this.skeletonData) return;
+        if (!this.skeletonData) {
+            this.disableRender();
+            return;
+        }
+
         let data = this.skeletonData.getRuntimeData();
-        if (!data) return;
+        if (!data) {
+            this.disableRender();
+            return;
+        }
         
         try {
             this.setSkeletonData(data);
@@ -1306,6 +1318,8 @@ sp.Skeleton = cc.Class({
             cc.warn(e);
         }
         
+        this.attachUtil.init(this);
+        this.attachUtil._associateAttachedNode();
         this._preCacheMode = this._cacheMode;
         this.animation = this.defaultAnimation;
     },

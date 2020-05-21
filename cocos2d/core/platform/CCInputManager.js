@@ -222,7 +222,7 @@ let inputManager = {
         if (handleTouches.length > 0) {
             this._glView._convertTouchesWithScale(handleTouches);
             let touchEvent = new cc.Event.EventTouch(handleTouches);
-            touchEvent._eventCode = cc.Event.EventTouch.CANCELLED;
+            touchEvent._eventCode = cc.Event.EventTouch.CANCELED;
             eventManager.dispatchEvent(touchEvent);
         }
         this._preTouchPool.length = 0;
@@ -341,6 +341,13 @@ let inputManager = {
      * @return {Vec2}
      */
     getPointByEvent (event, pos) {
+        // qq , uc and safari browser can't calculate pageY correctly, need to refresh canvas bounding rect
+        if (cc.sys.browserType === cc.sys.BROWSER_TYPE_QQ 
+            || cc.sys.browserType === cc.sys.BROWSER_TYPE_UC
+            || cc.sys.browserType === cc.sys.BROWSER_TYPE_SAFARI) {
+            this._updateCanvasBoundingRect();
+        }
+        
         if (event.pageX != null)  //not avalable in <= IE8
             return {x: event.pageX, y: event.pageY};
 
@@ -526,8 +533,8 @@ let inputManager = {
                     if (!event.changedTouches) return;
                     let body = document.body;
 
-                    canvasBoundingRect.adjustedLeft = canvasBoundingRect.left - (body.scrollLeft || 0);
-                    canvasBoundingRect.adjustedTop = canvasBoundingRect.top - (body.scrollTop || 0);
+                    canvasBoundingRect.adjustedLeft = canvasBoundingRect.left - (body.scrollLeft || window.scrollX || 0);
+                    canvasBoundingRect.adjustedTop = canvasBoundingRect.top - (body.scrollTop || window.scrollY || 0);
                     handler(selfPointer.getTouchesByEvent(event, canvasBoundingRect));
                     event.stopPropagation();
                     event.preventDefault();
@@ -560,4 +567,4 @@ let inputManager = {
     }
 };
 
-module.exports = _cc.inputManager = inputManager;
+module.exports = cc.internal.inputManager = inputManager;

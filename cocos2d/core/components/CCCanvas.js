@@ -27,6 +27,18 @@
 var Camera = require('../camera/CCCamera');
 var Component = require('./CCComponent');
 
+// Screen adaptation strategy for Canvas + Widget
+function addWidgetComponent (canvas) {
+    let widget = canvas.node.getComponent(cc.Widget);
+    if (!widget) {
+        widget = canvas.node.addComponent(cc.Widget);
+    }
+    widget.isAlignTop = true;
+    widget.isAlignBottom = true;
+    widget.isAlignLeft = true;
+    widget.isAlignRight = true;
+}
+
 /**
  * !#zh: 作为 UI 根节点，为所有子节点提供视窗四边的位置信息以供对齐，另外提供屏幕适配策略接口，方便从编辑器设置。
  * 注：由于本节点的尺寸会跟随屏幕拉伸，所以 anchorPoint 只支持 (0.5, 0.5)，否则适配不同屏幕时坐标会有偏差。
@@ -47,6 +59,7 @@ var Canvas = cc.Class({
 
     resetInEditor: CC_EDITOR && function () {
         _Scene._applyCanvasPreferences(this);
+        addWidgetComponent(this);
     },
 
     statics: {
@@ -76,7 +89,6 @@ var Canvas = cc.Class({
                 this._designResolution.width = value.width;
                 this._designResolution.height = value.height;
                 this.applySettings();
-                this.alignWithScreen();
             },
             tooltip: CC_DEV && 'i18n:COMPONENT.canvas.design_resolution'
         },
@@ -98,7 +110,6 @@ var Canvas = cc.Class({
                 if (this._fitHeight !== value) {
                     this._fitHeight = value;
                     this.applySettings();
-                    this.alignWithScreen();
                 }
             },
             tooltip: CC_DEV && 'i18n:COMPONENT.canvas.fit_height'
@@ -118,15 +129,18 @@ var Canvas = cc.Class({
                 if (this._fitWidth !== value) {
                     this._fitWidth = value;
                     this.applySettings();
-                    this.alignWithScreen();
                 }
             },
             tooltip: CC_DEV && 'i18n:COMPONENT.canvas.fit_width'
         }
     },
 
-    ctor: function () {
-        this._thisOnResized = this.alignWithScreen.bind(this);
+    // fit canvas node to design resolution
+    _fitDesignResolution: CC_EDITOR && function () {
+        // TODO: support paddings of locked widget
+        var designSize = cc.engine.getDesignResolutionSize();
+        this.node.setPosition(designSize.width * 0.5, designSize.height * 0.5);
+        this.node.setContentSize(designSize);
     },
 
     __preload: function () {
@@ -136,26 +150,28 @@ var Canvas = cc.Class({
         }
 
         if (Canvas.instance) {
-            return cc.errorID(6700,
+            return cc.warnID(6700,
                 this.node.name, Canvas.instance.node.name);
         }
         Canvas.instance = this;
 
-        if (CC_EDITOR) {
-            cc.director.on(cc.Director.EVENT_AFTER_UPDATE, this.alignWithScreen, this);
-            cc.engine.on('design-resolution-changed', this._thisOnResized);
+        // Align node to fit the screen
+        this.applySettings();
+
+        // Stretch to matched size during the scene initialization
+        let widget = this.getComponent(cc.Widget);
+        if (widget) {
+            widget.updateAlignment();
         }
-        else {
-            if (cc.sys.isMobile) {
-                window.addEventListener('resize', this._thisOnResized);
-            }
-            else {
-                cc.view.on('canvas-resize', this._thisOnResized);
-            }
+        else if (CC_EDITOR) {
+            this._fitDesignResolution();
         }
 
-        this.applySettings();
-        this.alignWithScreen();
+        // Constantly align canvas node in edit mode
+        if (CC_EDITOR) {
+            cc.director.on(cc.Director.EVENT_AFTER_UPDATE, this._fitDesignResolution, this);
+            cc.engine.on('design-resolution-changed', this._fitDesignResolution, this);
+        }
 
         // Camera could be removed in canvas render mode
         let cameraNode = cc.find('Main Camera', this.node);
@@ -177,46 +193,13 @@ var Canvas = cc.Class({
 
     onDestroy: function () {
         if (CC_EDITOR) {
-            cc.director.off(cc.Director.EVENT_AFTER_UPDATE, this.alignWithScreen, this);
-            cc.engine.off('design-resolution-changed', this._thisOnResized);
-        }
-        else {
-            if (cc.sys.isMobile) {
-                window.removeEventListener('resize', this._thisOnResized);
-            }
-            else {
-                cc.view.off('canvas-resize', this._thisOnResized);
-            }
+            cc.director.off(cc.Director.EVENT_AFTER_UPDATE, this._fitDesignResolution, this);
+            cc.engine.off('design-resolution-changed', this._fitDesignResolution, this);
         }
 
         if (Canvas.instance === this) {
             Canvas.instance = null;
         }
-    },
-
-    //
-
-    alignWithScreen: function () {
-        var designSize, nodeSize;
-        if (CC_EDITOR) {
-            nodeSize = designSize = cc.engine.getDesignResolutionSize();
-            this.node.setPosition(designSize.width * 0.5, designSize.height * 0.5);
-        }
-        else {
-            var canvasSize = nodeSize = cc.visibleRect;
-            designSize = cc.view.getDesignResolutionSize();
-            var clipTopRight = !this.fitHeight && !this.fitWidth;
-            var offsetX = 0;
-            var offsetY = 0;
-            if (clipTopRight) {
-                // offset the canvas to make it in the center of screen
-                offsetX = (designSize.width - canvasSize.width) * 0.5;
-                offsetY = (designSize.height - canvasSize.height) * 0.5;
-            }
-            this.node.setPosition(canvasSize.width * 0.5 + offsetX, canvasSize.height * 0.5 + offsetY);
-        }
-        this.node.width = nodeSize.width;
-        this.node.height = nodeSize.height;
     },
 
     applySettings: function () {

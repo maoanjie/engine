@@ -23,10 +23,9 @@
  THE SOFTWARE.
  ****************************************************************************/
 
-import { mat4 } from '../core/vmath';
-
 const utils = require('../core/platform/utils');
 const sys = require('../core/platform/CCSys');
+const macro = require('../core/platform/CCMacro');
 
 const READY_STATE = {
     HAVE_NOTHING: 0,
@@ -36,7 +35,7 @@ const READY_STATE = {
     HAVE_ENOUGH_DATA: 4
 };
 
-let _mat4_temp = mat4.create();
+let _mat4_temp = cc.mat4();
 
 let VideoPlayerImpl = cc.Class({
     name: 'VideoPlayerImpl',
@@ -50,15 +49,16 @@ let VideoPlayerImpl = cc.Class({
 
         this._waitingFullscreen = false;
         this._fullScreenEnabled = false;
+        this._stayOnBottom = false;
 
         this._loadedmeta = false;
         this._loaded = false;
         this._visible = false;
         this._playing = false;
         this._ignorePause = false;
+        this._forceUpdate = false;
 
         // update matrix cache
-        this._forceUpdate = true;
         this._m00 = 0;
         this._m01 = 0;
         this._m04 = 0;
@@ -77,6 +77,7 @@ let VideoPlayerImpl = cc.Class({
         let cbs = this.__eventListeners;
         cbs.loadedmetadata = function () {
             self._loadedmeta = true;
+            self._forceUpdate = true;
             if (self._waitingFullscreen) {
                 self._waitingFullscreen = false;
                 self._toggleFullscreen(true);
@@ -122,6 +123,7 @@ let VideoPlayerImpl = cc.Class({
                 video.readyState === READY_STATE.HAVE_METADATA) {
                 video.currentTime = 0;
                 self._loaded = true;
+                self._forceUpdate = true;
                 self._dispatchEvent(VideoPlayerImpl.EventType.READY_TO_PLAY);
                 self._updateVisibility();
             }
@@ -139,13 +141,11 @@ let VideoPlayerImpl = cc.Class({
 
         if (this._visible) {
             video.style.visibility = 'visible';
-            this._forceUpdate = true;
         }
         else {
             video.style.visibility = 'hidden';
             video.pause();
             this._playing = false;
-            this._forceUpdate = false;
         }
     },
 
@@ -162,6 +162,7 @@ let VideoPlayerImpl = cc.Class({
         video.style.position = "absolute";
         video.style.bottom = "0px";
         video.style.left = "0px";
+        video.style['z-index'] = this._stayOnBottom ? macro.MIN_ZINDEX : 0;
         video.className = "cocosVideo";
         video.setAttribute('preload', 'auto');
         video.setAttribute('webkit-playsinline', '');
@@ -217,8 +218,8 @@ let VideoPlayerImpl = cc.Class({
             return;
         }
 
-        this._url = path;
         this.removeDom();
+        this._url = path;
         this.createDomElementIfNeeded(muted);
         this._bindEvent();
 
@@ -380,6 +381,12 @@ let VideoPlayerImpl = cc.Class({
         }
     },
 
+    setStayOnBottom: function (enabled) {
+        this._stayOnBottom = enabled;
+        if (!this._video) return;
+        this._video.style['z-index'] = enabled ? macro.MIN_ZINDEX : 0;
+    },
+
     setFullScreenEnabled: function (enable) {
         if (!this._loadedmeta && enable) {
             this._waitingFullscreen = true;
@@ -446,7 +453,7 @@ let VideoPlayerImpl = cc.Class({
 
         let renderCamera = cc.Camera._findRendererCamera(node);
         if (renderCamera) {
-            renderCamera.worldMatrixToScreen(_mat4_temp, _mat4_temp, cc.visibleRect.width, cc.visibleRect.height);
+            renderCamera.worldMatrixToScreen(_mat4_temp, _mat4_temp, cc.game.canvas.width, cc.game.canvas.height);
         }
 
         let _mat4_tempm = _mat4_temp.m;
@@ -468,11 +475,9 @@ let VideoPlayerImpl = cc.Class({
         this._w = node._contentSize.width;
         this._h = node._contentSize.height;
 
-        let scaleX = cc.view._scaleX, scaleY = cc.view._scaleY;
         let dpr = cc.view._devicePixelRatio;
-
-        scaleX /= dpr;
-        scaleY /= dpr;
+        let scaleX = 1 / dpr;
+        let scaleY = 1 / dpr;
 
         let container = cc.game.container;
         let a = _mat4_tempm[0] * scaleX, b = _mat4_tempm[1], c = _mat4_tempm[4], d = _mat4_tempm[5] * scaleY;
@@ -496,9 +501,6 @@ let VideoPlayerImpl = cc.Class({
         let appx = (w * _mat4_tempm[0]) * node._anchorPoint.x;
         let appy = (h * _mat4_tempm[5]) * node._anchorPoint.y;
 
-        let viewport = cc.view._viewportRect;
-        offsetX += viewport.x / dpr;
-        offsetY += viewport.y / dpr;
 
         let tx = _mat4_tempm[12] * scaleX - appx + offsetX, ty = _mat4_tempm[13] * scaleY - appy + offsetY;
 
@@ -507,10 +509,18 @@ let VideoPlayerImpl = cc.Class({
         this._video.style['-webkit-transform'] = matrix;
         this._video.style['transform-origin'] = '0px 100% 0px';
         this._video.style['-webkit-transform-origin'] = '0px 100% 0px';
+
+        // TODO: move into web adapter
+        // video style would change when enter fullscreen on IE
+        // there is no way to add fullscreenchange event listeners on IE so that we can restore the cached video style
+        if (sys.browserType !== sys.BROWSER_TYPE_IE) {
+            this._forceUpdate = false;
+        }
     }
 });
 
 VideoPlayerImpl.EventType = {
+    NONE: -1,
     PLAYING: 0,
     PAUSED: 1,
     STOPPED: 2,
